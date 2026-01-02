@@ -35,7 +35,7 @@ from sklearn.metrics import (
 from sklearn.calibration import calibration_curve
 from tqdm import tqdm
 
-from adult_income.constants import (
+from constants import (
     mlflow_artifacts_data,
     mlflow_models_data,
     databricks_username,
