@@ -1,0 +1,12 @@
+black==24.10.0
+eda_toolkit==0.0.22
+equiboots==0.0.1a11
+-e .
+loguru==0.7.3
+mlflow==2.19.0
+model_tuner==0.0.34b1
+python-dotenv==1.0.1
+pytest==8.3.4
+pytest-cov==6.0.0
+shap==0.46.0
+typer==0.15.1
