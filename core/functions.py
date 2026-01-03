@@ -11,6 +11,7 @@ import mlflow
 from mlflow.tracking import MlflowClient
 import pickle
 import os
+import networkx as nx
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
@@ -35,7 +36,7 @@ from sklearn.metrics import (
 from sklearn.calibration import calibration_curve
 from tqdm import tqdm
 
-from constants import (
+from core.constants import (
     mlflow_artifacts_data,
     mlflow_models_data,
     databricks_username,
@@ -1963,3 +1964,197 @@ def return_best_model(outcome, metric, mlruns_location=None, databricks=False):
         )
 
     return best_model
+
+################################################################################
+############################### Actor Embeddings ###############################
+################################################################################
+
+def normalize_actor(actor: str) -> str:
+    """
+    Normalize ACLED actor strings into low-cardinality actor families
+    for embedding and modeling. Collapses geographic and unit-level
+    variation while preserving actor alignment and role.
+    """
+    if actor is None or not isinstance(actor, str):
+        return "None_Actor"
+
+    a = actor.lower()
+
+    # civilians / protesters
+    if "civilians" in a:
+        return "Civilians"
+    if "protesters" in a:
+        return "Protesters"
+
+    # unidentified
+    if "unidentified" in a:
+        return "Unidentified"
+
+    # communal militias
+    if "communal militia" in a:
+        return "Communal_Militia_Ukraine"
+
+    # Ukraine military
+    if "military forces of ukraine" in a:
+        if "azov" in a:
+            return "MF_Ukraine_Azov"
+        if "air force" in a:
+            return "MF_Ukraine_AirForce"
+        if "navy" in a:
+            return "MF_Ukraine_Navy"
+        if "marines" in a:
+            return "MF_Ukraine_Marines"
+        if "intelligence" in a or "gur" in a:
+            return "MF_Ukraine_Intelligence"
+        return "MF_Ukraine"
+
+    # Russia military
+    if "military forces of russia" in a:
+        if "kadyrov" in a or "chechen" in a:
+            return "MF_Russia_Kadyrov"
+        if "air force" in a:
+            return "MF_Russia_AirForce"
+        if "navy" in a:
+            return "MF_Russia_Navy"
+        if "gru" in a:
+            return "MF_Russia_GRU"
+        return "MF_Russia"
+
+    # police
+    if "police forces of ukraine" in a:
+        return "Police_Ukraine"
+    if "police forces of russia" in a:
+        return "Police_Russia"
+
+    # proxies and special groups
+    if "wagner" in a:
+        return "Wagner"
+    if "donetsk people's republic" in a or "luhansk people's republic" in a:
+        return "Russia_Proxy"
+    if "lsr" in a or "freedom of russia legion" in a:
+        return "Anti_Russia_Proxy"
+    if "rdk" in a:
+        return "Anti_Russia_Proxy"
+
+    # fallback
+    return actor
+
+################################################################################
+# Actor Interactions Embeddings
+################################################################################
+
+def parse_assoc_actors(x):
+    if not isinstance(x, str) or x.strip() == "":
+        return []
+    return [a.strip() for a in x.split(";")]
+
+def build_actor_interaction_graph(
+    df,
+    actor1_col="actor1_root",
+    actor2_col="actor2_root",
+    assoc1_col="assoc_actor_1",
+    assoc2_col="assoc_actor_2",
+    none_actor_label="None_Actor",
+    main_weight=1.0,
+    assoc_weight=0.5,
+    none_actor_weight=0.3,
+):
+    """
+    Build a weighted, undirected actor interaction graph.
+    Primary actors define main edges; associated actors contribute
+    lower-weight contextual edges used for representation learning.
+    """
+
+    G = nx.Graph()
+
+    for _, row in tqdm(
+        df.iterrows(),
+        total=len(df),
+        desc="Building actor interaction graph"
+    ):
+        a1 = row[actor1_col]
+        a2 = row[actor2_col]
+
+        # main interaction
+        if a1 != a2:
+            w = main_weight
+            if a2 == none_actor_label:
+                w = none_actor_weight
+
+            if G.has_edge(a1, a2):
+                G[a1][a2]["weight"] += w
+            else:
+                G.add_edge(a1, a2, weight=w)
+
+        # assoc actors for actor1
+        for assoc in parse_assoc_actors(row.get(assoc1_col)):
+            assoc_root = normalize_actor(assoc)
+            if assoc_root != a1:
+                G.add_edge(a1, assoc_root,
+                           weight=G.get_edge_data(a1, assoc_root, 
+                                                  {}).get("weight", 0) 
+                                                  + assoc_weight)
+
+        # assoc actors for actor2
+        for assoc in parse_assoc_actors(row.get(assoc2_col)):
+            assoc_root = normalize_actor(assoc)
+            if assoc_root != a2:
+                G.add_edge(a2, assoc_root,
+                           weight=G.get_edge_data(a2, assoc_root, 
+                                                  {}).get("weight", 0) 
+                                                  + assoc_weight)
+
+    return G
+
+
+################################################################################
+## Actor Embedding Feature Engineering
+################################################################################
+
+def add_pairwise_embedding_features(
+    df: pd.DataFrame,
+    emb_prefix: str = "emb_",
+    a2_prefix: str = "a2_emb_",
+    add_dot: bool = False,
+) -> pd.DataFrame:
+    """
+    Add pairwise actor embedding interaction features.
+
+    Creates:
+    - emb_diff_k = emb_k - a2_emb_k
+    - optional emb_dot = dot(emb, a2_emb)
+    """
+
+    emb_cols = sorted(
+        c for c in df.columns
+        if c.startswith(emb_prefix) and not c.startswith(a2_prefix)
+    )
+    a2_cols = sorted(
+        c for c in df.columns
+        if c.startswith(a2_prefix)
+    )
+
+    if len(emb_cols) == 0 or len(a2_cols) == 0:
+        raise ValueError("Embedding columns not found in DataFrame.")
+
+    if len(emb_cols) != len(a2_cols):
+        raise ValueError(
+            f"Actor1 and Actor2 embedding dimensions do not match "
+            f"({len(emb_cols)} vs {len(a2_cols)})."
+        )
+
+    # Create per-dimension differences
+    for c1, c2 in zip(emb_cols, a2_cols):
+        dim = c1.replace(emb_prefix, "")
+        col_name = f"emb_diff_{dim}"
+        if col_name not in df.columns:
+            df[col_name] = df[c1] - df[c2]
+
+    # Optional dot product
+    if add_dot:
+        df["emb_dot"] = np.sum(
+            df[emb_cols].values * df[a2_cols].values,
+            axis=1
+        )
+
+    return df

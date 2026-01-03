@@ -4,7 +4,26 @@
 
 import os
 
+seed = 222  # random seed for reproducibility
+
 model_output = "model_output"  # model output path
+
+################################################################################
+############################# Date Variables ###################################
+################################################################################
+event_date = "event_date"  # event date column
+
+################################################################################
+############################# Drop Variables ###################################
+################################################################################
+
+# variables to drop from dataset
+
+drop_vars = ["region", "year", "country", "admin1", "admin2", "admin3", "actor1", 
+             "actor2", "actor1_root", "actor2_root", "assoc_actor_1", "source",
+             "source_scale", "assoc_actor_2", "inter1", "inter2", "event_type", 
+             "time_precision", "geo_precision", "timestamp", "disorder_type", 
+             "event_date", "latitude", "longitude"]  
 
 ################################################################################
 ############################# Mlflow Variables #################################
@@ -27,7 +46,7 @@ cat_vars = []
 ########################## Variable/DataFrame Constants ########################
 ################################################################################
 
-var_index = "census_id"  # id index
+var_index = "event_id_cnty"  # id index
 age = "age"  # age
 age_bin = ""  # bin of ages for stratification only
 main_df = "df.parquet"  # main dataframe file name
