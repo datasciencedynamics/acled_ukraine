@@ -2115,14 +2115,15 @@ def add_pairwise_embedding_features(
     df: pd.DataFrame,
     emb_prefix: str = "emb_",
     a2_prefix: str = "a2_emb_",
+    add_diff: bool = False,
     add_dot: bool = False,
 ) -> pd.DataFrame:
     """
-    Add pairwise actor embedding interaction features.
+    Add optional pairwise actor embedding interaction features.
 
-    Creates:
-    - emb_diff_k = emb_k - a2_emb_k
-    - optional emb_dot = dot(emb, a2_emb)
+    Options:
+    - add_diff: emb_diff_k = emb_k - a2_emb_k
+    - add_dot:  emb_dot = dot(emb, a2_emb)
     """
 
     emb_cols = sorted(
@@ -2143,12 +2144,13 @@ def add_pairwise_embedding_features(
             f"({len(emb_cols)} vs {len(a2_cols)})."
         )
 
-    # Create per-dimension differences
-    for c1, c2 in zip(emb_cols, a2_cols):
-        dim = c1.replace(emb_prefix, "")
-        col_name = f"emb_diff_{dim}"
-        if col_name not in df.columns:
-            df[col_name] = df[c1] - df[c2]
+    # Optional per-dimension differences
+    if add_diff:
+        for c1, c2 in zip(emb_cols, a2_cols):
+            dim = c1.replace(emb_prefix, "")
+            col_name = f"emb_diff_{dim}"
+            if col_name not in df.columns:
+                df[col_name] = df[c1] - df[c2]
 
     # Optional dot product
     if add_dot:

@@ -285,7 +285,7 @@ def main(
     # and modeling tasks.
     #############################################################################
 
-    df = add_pairwise_embedding_features(df=df, add_dot=True)
+    df = add_pairwise_embedding_features(df=df)
 
     ############################################################################
     # Step 10. Drop Intermediate and Redundant Columns
