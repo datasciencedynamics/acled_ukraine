@@ -14,10 +14,8 @@ from imblearn.over_sampling import SMOTE
 from sklearn.feature_selection import RFE
 from imblearn.under_sampling import RandomUnderSampler
 from sklearn.linear_model import LinearRegression, Lasso, ElasticNet, Ridge
-
-from sklearn.ensemble import RandomForestClassifier
-from xgboost import XGBClassifier
-from catboost import CatBoostClassifier
+from xgboost import XGBRegressor
+from catboost import CatBoostRegressor
 
 from core.constants import (
     exp_artifact_name,
