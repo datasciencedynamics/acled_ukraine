@@ -2,7 +2,6 @@
 ######################### Import Requisite Libraries ###########################
 import os
 import typer
-import re
 import pandas as pd
 from node2vec import Node2Vec
 
@@ -325,23 +324,23 @@ def main(
     df = df.apply(lambda x: safe_to_numeric(x))
 
 
-    ############################################################################
-    # Step 13. Concatenate Tags Column to Notes Column
-    ############################################################################
-    # Combine the 'tags' column with the 'notes' column to consolidate
-    # relevant information into a single text field. This concatenation
-    # enhances the dataset by merging related textual data, which can be
-    # beneficial for natural language processing tasks or feature extraction. 
-    # Retaining tags by itself may lead to sparse data issues.
+    # ############################################################################
+    # # Step 13. Concatenate Tags Column to Notes Column
+    # ############################################################################
+    # # Combine the 'tags' column with the 'notes' column to consolidate
+    # # relevant information into a single text field. This concatenation
+    # # enhances the dataset by merging related textual data, which can be
+    # # beneficial for natural language processing tasks or feature extraction. 
+    # # Retaining tags by itself may lead to sparse data issues.
 
-    df["tags"] = df["tags"].fillna("").astype(str)
+    # df["tags"] = df["tags"].fillna("").astype(str)
 
-    df["notes"] = (
-        df["notes"].fillna("").astype(str)
-        + " | TAGS: "
-        + df["tags"]
-    )
-    df.drop(columns=["tags"], inplace=True) ## drop tags after concatenation
+    # df["notes"] = (
+    #     df["notes"].fillna("").astype(str)
+    #     + " | TAGS: "
+    #     + df["tags"]
+    # )
+    # df.drop(columns=["tags"], inplace=True) ## drop tags after concatenation
 
     ################################################################################
     # Step 14. Zero Variance Columns

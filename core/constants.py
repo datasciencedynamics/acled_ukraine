@@ -19,11 +19,12 @@ event_date = "event_date"  # event date column
 
 # variables to drop from dataset
 
-drop_vars = ["region", "year", "country", "admin1", "admin2", "admin3", "actor1", 
-             "actor2", "actor1_root", "actor2_root", "assoc_actor_1", "source",
-             "source_scale", "assoc_actor_2", "inter1", "inter2", "event_type", 
-             "time_precision", "geo_precision", "timestamp", "disorder_type", 
-             "event_date", "latitude", "longitude"]  
+drop_vars = ["region", "location", "admin2", "admin3", "year", "country", 
+             "actor1", "actor2", "actor1_root", "actor2_root", "assoc_actor_1", 
+             "source", "source_scale", "assoc_actor_2", "inter1", "inter2", 
+             "event_type", "time_precision", "geo_precision", "timestamp", 
+             "disorder_type", "event_date", "latitude", "longitude", "tags", 
+             "notes"]  
 
 ################################################################################
 ############################# Mlflow Variables #################################
