@@ -73,6 +73,7 @@ def main(
         X = df.drop(columns=["fatalities"]).copy()
         y = np.log1p(df["fatalities"]).copy() # keep as DataFrame for now
 
+
         ## Log first five rows of features and targets
         print(f"\n{'=' * 80}\nX\n{'=' * 80}\n{X.head()}")
         print(f"\n{'=' * 80}\ny\n{'=' * 80}\n{y.head()}")
@@ -83,8 +84,6 @@ def main(
 
         X = X[cols_to_keep]
 
-        ## Display class balance
-        print(f"\nBreakdown of y:\n{y.value_counts()}\n")
         print(y)
 
         X_columns_list = X.columns.to_list()

@@ -285,7 +285,7 @@ xgb_definition = {
     "estimator_name": xgb_name,
     "tuned_parameters": xgb_parameters,
     "randomized_grid": True,
-    "n_iter": 1,
+    "n_iter": 3,
     "early": True,
 }
 

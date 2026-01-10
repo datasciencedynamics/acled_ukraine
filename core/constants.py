@@ -84,4 +84,4 @@ shap_artifacts_data = "./mlruns/explainer"
 ################################################################################
 ############################### Target Outcome #################################
 
-target_outcome = "income"
+target_outcome = "fatalities"
