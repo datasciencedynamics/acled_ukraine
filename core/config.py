@@ -12,9 +12,9 @@ from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from imblearn.over_sampling import SMOTE
 from sklearn.feature_selection import RFE
-from sklearn.linear_model import ElasticNet
 from imblearn.under_sampling import RandomUnderSampler
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LinearRegression, Lasso, ElasticNet, Ridge
+
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 from catboost import CatBoostClassifier
@@ -61,9 +61,9 @@ sampler_definitions = {
     "RandomUnderSampler": RandomUnderSampler(random_state=rstate),
 }
 
-rfe_estimator = LogisticRegression(
-    max_iter=100,
-    n_jobs=-2,
+rfe_estimator = Ridge(
+    alpha=1.0,
+    random_state=rstate,
 )
 
 # Remove 10% of features per iteration
@@ -180,36 +180,18 @@ pipelines = {
 # mlflow_data = "mlflow_data"  # path to store mlflow artificats (i.e., results)
 
 ################################################################################
-########################## Logistic Regression #################################
+############################ Linear Regression #################################
 ################################################################################
 
-# Define the hyperparameters for Logistic Regression
-lr_name = "lr"
 
-# lr_penalties = ["elasticnet"]
-# lr_penalties = ["l1"]
-lr_penalties = ["l2"]
-lr_Cs = np.logspace(-4, 0, 10)
-l1_ratio = np.linspace(0, 1, 10)
+lr = LinearRegression()  # generate the model
 
-# Structure the parameters similarly to the RF template
+# Define the hyperparameters
 tuned_parameters_lr = [
-    {
-        "lr__penalty": lr_penalties,
-        "lr__C": lr_Cs,
-        "feature_selection_RFE__n_features_to_select": [10, 0.1, 0.5, 0.7, 1.0],
-        # "lr__l1_ratio": l1_ratio,
-    }
+    {"lr__n_jobs": [None, -1]},
 ]
 
-lr = LogisticRegression(
-    class_weight="balanced",
-    random_state=rstate,
-    n_jobs=-2,
-    # solver="saga",
-    # solver="liblinear",
-    solver="lbfgs",
-)
+lr_name = "lr"
 
 lr_definition = {
     "clc": lr,
@@ -222,48 +204,48 @@ lr_definition = {
 
 
 ################################################################################
-########################## Random Forest Classifier ############################
+############################# Lasso Regression #################################
 ################################################################################
 
-# Define the hyperparameters for Random Forest
-rf_name = "rf"
+# Create the model
+lasso = Lasso(random_state=rstate)
 
-rf_n_estimators = [100, 200, 300]
-rf_max_depths = [None, 5, 10]
-rf_criterions = ["gini", "entropy"]
-rf_parameters = [
+# Define the hyperparameters
+tuned_parameters_lasso = [
     {
-        "rf__n_estimators": rf_n_estimators,
-        "rf__max_depth": rf_max_depths,
-        "rf__criterion": rf_criterions,
-        "feature_selection_RFE__n_features_to_select": [10, 0.1, 0.5, 0.7, 1.0],
+        "lasso__alpha": [0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
+        "lasso__fit_intercept": [True, False],
+        "lasso__precompute": [False],
+        "lasso__copy_X": [True, False],
+        "lasso__max_iter": [100, 500],
+        "lasso__tol": [1e-4, 1e-3],
+        "lasso__warm_start": [True, False],
+        "lasso__positive": [True, False],
+        "lasso__selection": ["cyclic", "random"],
     }
 ]
 
-rf = RandomForestClassifier(
-    class_weight="balanced",
-    random_state=rstate,
-    n_jobs=-2,
-)
+lasso_name = "lasso"
 
-rf_definition = {
-    "clc": rf,
-    "estimator_name": rf_name,
-    "tuned_parameters": rf_parameters,
-    "randomized_grid": True,
-    "n_iter": 1,
+lasso_definition = {
+    "clc": lasso,
+    "estimator_name": lasso_name,
+    "tuned_parameters": tuned_parameters_lasso,
+    "randomized_grid": True,  # matches your LR
+    "n_iter": 20,  # your search_size_lasso variable
     "early": False,
 }
 
+
 ################################################################################
-############################## XGBoost Classifier ##############################
+############################### XGBoost Regressor ##############################
 ################################################################################
 
 # Estimator name prefix for use in GridSearchCV or similar tools
 xgb_name = "xgb"
 
-xgb = XGBClassifier(
-    objective="binary:logistic",
+xgb = XGBRegressor(
+    objective="reg:squarederror",
     random_state=rstate,
     tree_method="hist",
     device="cuda",
@@ -278,7 +260,7 @@ xgb_subsamples = [0.8, 1.0]  # Subsample ratio of the training instances
 xgb_colsample_bytree = [0.8, 1.0]
 xgb_alpha = [0, 0.1, 1, 10]  # L1 regularization (alpha)
 xgb_lambda = [0, 0.1, 10, 100]  # L2 regularization (lambda)
-xgb_eval_metric = ["logloss"]  # check out "aucpr"
+xgb_eval_metric = ["rmse"]  # check out "aucpr"
 xgb_early_stopping_rounds = [3]
 xgb_verbose = [0]
 # Subsample ratio of columns when constructing each tree
@@ -310,15 +292,15 @@ xgb_definition = {
 }
 
 ################################################################################
-############################ CatBoost Classifier ###############################
+############################# CatBoost Regressor ###############################
 ################################################################################
 
 cat_name = "cat"
 
-cat = CatBoostClassifier(
+cat = CatBoostRegressor(
     task_type="CPU",
     random_state=rstate,
-    eval_metric="Logloss",
+    eval_metric="RMSE",
 )
 
 # Define the hyperparameters for CatBoost
@@ -359,7 +341,7 @@ cat_definition = {
 
 model_definitions = {
     lr_name: lr_definition,
-    rf_name: rf_definition,
+    lasso_name: lasso_definition,
     xgb_name: xgb_definition,
     cat_name: cat_definition,
 }
