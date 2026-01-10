@@ -2,6 +2,7 @@
 ######################### Import Requisite Libraries ###########################
 import os
 import typer
+import re
 import pandas as pd
 from node2vec import Node2Vec
 
