@@ -7,8 +7,8 @@ PYTHON_VERSION = 3.11
 PYTHON_INTERPRETER = python
 VENV_DIR = acled_venv
 CONDA_ENV_NAME = acled_conda
-PROJECT_DIRECTORY = acled_ukraine
-
+MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+PROJECT_DIRECTORY := $(abspath $(MAKEFILE_DIR))
 
 ############################## Training Globals ################################
 
@@ -171,13 +171,15 @@ create_folders:
 
 .PHONY: data_gen
 data_gen:
-	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/data_gen.py \
-		--output-data-file ./data/raw/df.parquet
+	$(PYTHON_INTERPRETER) preprocessing/data_gen.py \
+		--input-data-file "./data/raw/ACLED Data_2026-01-02.csv" \
+		--output-data-file "./data/raw/acled_ukraine_data_2026_01_02.parquet"
+
 
 .PHONY: data_prep_preprocessing_training
 data_prep_preprocessing_training:
 	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/preprocessing.py \
-	--input-data-file ./data/raw/df.parquet \
+	--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
 	--output-data-file ./data/processed/df_sans_zero_missing.parquet \
 	--stage training \
 	--data-path ./data/processed
