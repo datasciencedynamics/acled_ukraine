@@ -575,705 +575,6 @@ def metrics_report(
     metrics_df["Mean"] = metrics_df.mean(axis=1).round(3)
     return metrics_df
 
-
-class PlotMetrics:
-    def __init__(self, images_path=None):
-        """
-        Initialize the PlotMetrics class.
-
-        Parameters:
-        -----------
-        images_path : str, optional
-            Path to save the generated plots.
-        """
-        self.images_path = images_path
-
-    def _save_plot(self, title, extension="png"):
-        """
-        Save the plot to the specified path if images_path is provided.
-
-        Parameters:
-        -----------
-        title : str
-            Title of the plot.
-        extension : str, optional (default="png")
-            File extension for the saved plot.
-        """
-        if self.images_path:
-            filename = f"{title.replace(' ', '_').replace(':', '')}.{extension}"
-            plt.savefig(os.path.join(self.images_path, filename), format=extension)
-
-    def plot_roc(
-        self,
-        df=None,
-        outcome_cols=None,
-        pred_cols=None,
-        models=None,
-        X_valid=None,
-        y_valid=None,
-        pred_probs_df=None,
-        model_name=None,
-        custom_name=None,
-        show=True,
-    ):
-        """
-        Plot ROC curves from model predictions or predicted probabilities.
-
-        Parameters
-        ----------
-        df : pd.DataFrame, optional
-            DataFrame containing actual and predicted probability columns.
-        outcome_cols : list of str, optional
-            Column names for actual binary outcomes in `df`.
-        pred_cols : list of str, optional
-            Column names for predicted probabilities in `df`.
-        models : dict, optional
-            Dictionary of trained models with `.predict_proba()` methods.
-        X_valid : pd.DataFrame, optional
-            Validation features for generating model predictions.
-        y_valid : array-like, optional
-            True binary labels corresponding to `X_valid`.
-        pred_probs_df : pd.DataFrame, optional
-            DataFrame of predicted probabilities (one column per model or method).
-        model_name : str, optional
-            Key to select a specific model from `models`.
-        custom_name : str, optional
-            Custom title prefix to display on the plot.
-        show : bool, default=True
-            Whether to display the plot immediately.
-
-        Returns
-        -------
-        fig : matplotlib.figure.Figure
-            The resulting matplotlib figure object.
-        """
-
-        fig, _ = plt.subplots(figsize=(8, 8))
-        title = None
-
-        if outcome_cols and pred_cols and df is not None:
-            for outcome_col, pred_col in zip(outcome_cols, pred_cols):
-                y_prob = df[pred_col]
-                fpr, tpr, _ = roc_curve(df[outcome_col], y_prob)
-                auc_score = roc_auc_score(df[outcome_col], y_prob)
-                plt.plot(fpr, tpr, label=f"{outcome_col} (AUC={auc_score:.2f})")
-
-        if models and X_valid is not None and y_valid is not None:
-            if model_name:
-                y_score = models[model_name].predict_proba(X_valid)[:, 1]
-                fpr, tpr, _ = roc_curve(y_valid, y_score)
-                auc_score = roc_auc_score(y_valid, y_score)
-                plt.plot(fpr, tpr, label=f"{model_name} (AUC={auc_score:.2f})")
-            else:
-                for name, model in models.items():
-                    y_score = model.predict_proba(X_valid)[:, 1]
-                    fpr, tpr, _ = roc_curve(y_valid, y_score)
-                    auc_score = roc_auc_score(y_valid, y_score)
-                    plt.plot(fpr, tpr, label=f"{name} (AUC={auc_score:.2f})")
-
-        if pred_probs_df is not None:
-            for col in pred_probs_df.columns:
-                y_score = pred_probs_df[col].values
-                fpr, tpr, _ = roc_curve(y_valid, y_score)
-                auc_score = roc_auc_score(y_valid, y_score)
-                plt.plot(fpr, tpr, label=f"{col} (AUC={auc_score:.2f})")
-
-        plt.plot([0, 1], [0, 1], color="navy", linestyle="--")
-        plt.xlim([0.0, 1.0])
-        plt.ylim([0.0, 1.05])
-        plt.xlabel("False Positive Rate")
-        plt.ylabel("True Positive Rate")
-        plt.legend(loc="lower right")
-
-        title = (
-            f"{custom_name} - Receiver Operating Characteristic"
-            if custom_name
-            else "Receiver Operating Characteristic"
-        )
-
-        plt.title(title)
-        self._save_plot(title)
-        if show:
-            plt.show()
-
-        return fig
-
-    def plot_precision_recall(
-        self,
-        df=None,
-        outcome_cols=None,
-        pred_cols=None,
-        models=None,
-        X_valid=None,
-        y_valid=None,
-        pred_probs_df=None,
-        model_name=None,
-        custom_name=None,
-        show=True,
-    ):
-        """
-        Plot precision-recall curves from model predictions or predicted
-        probabilities.
-
-        Parameters
-        ----------
-        df : pd.DataFrame, optional
-            DataFrame containing actual and predicted probability columns.
-        outcome_cols : list of str, optional
-            Column names for actual binary outcomes in `df`.
-        pred_cols : list of str, optional
-            Column names for predicted probabilities in `df`.
-        models : dict, optional
-            Dictionary of trained models with `.predict_proba()` methods.
-        X_valid : pd.DataFrame, optional
-            Validation features for generating model predictions.
-        y_valid : array-like, optional
-            True binary labels corresponding to `X_valid`.
-        pred_probs_df : pd.DataFrame, optional
-            DataFrame of predicted probabilities (one column per model).
-        model_name : str, optional
-            Key to select a specific model from `models`.
-        custom_name : str, optional
-            Custom title prefix to display on the plot.
-        show : bool, default=True
-            Whether to display the plot immediately.
-
-        Returns
-        -------
-        fig : matplotlib.figure.Figure
-            The resulting matplotlib figure object.
-        """
-
-        fig, _ = plt.subplots(figsize=(8, 8))
-        title = None
-
-        if outcome_cols and pred_cols and df is not None:
-            for outcome_col, pred_col in zip(outcome_cols, pred_cols):
-                y_prob = df[pred_col]
-                precision, recall, _ = precision_recall_curve(df[outcome_col], y_prob)
-                auc_pr = auc(recall, precision)
-                plt.plot(
-                    recall, precision, label=f"{outcome_col} (AUC-PR={auc_pr:.2f})"
-                )
-
-        if models and X_valid is not None and y_valid is not None:
-            if model_name:
-                y_score = models[model_name].predict_proba(X_valid)[:, 1]
-                precision, recall, _ = precision_recall_curve(y_valid, y_score)
-                auc_pr = auc(recall, precision)
-                plt.plot(recall, precision, label=f"{model_name} (AUC-PR={auc_pr:.2f})")
-            else:
-                for name, model in models.items():
-                    y_score = model.predict_proba(X_valid)[:, 1]
-                    precision, recall, _ = precision_recall_curve(y_valid, y_score)
-                    auc_pr = auc(recall, precision)
-                    plt.plot(recall, precision, label=f"{name} (AUC-PR={auc_pr:.2f})")
-
-        if pred_probs_df is not None:
-            for col in pred_probs_df.columns:
-                y_score = pred_probs_df[col].values
-                precision, recall, _ = precision_recall_curve(y_valid, y_score)
-                auc_pr = auc(recall, precision)
-                plt.plot(recall, precision, label=f"{col} (AUC-PR={auc_pr:.2f})")
-
-        plt.xlabel("Recall")
-        plt.ylabel("Precision")
-        plt.legend(loc="lower left")
-
-        title = (
-            f"{custom_name} - Precision-Recall Curve"
-            if custom_name
-            else "Precision-Recall Curve"
-        )
-
-        plt.title(title)
-        self._save_plot(title)
-        if show:
-            plt.show()
-
-        return fig
-
-    def plot_confusion_matrix(
-        self,
-        df=None,
-        outcome_cols=None,
-        pred_cols=None,
-        models=None,
-        X_valid=None,
-        y_valid=None,
-        threshold=0.5,
-        custom_name=None,
-        model_name=None,
-        normalize=None,
-        cmap="Blues",
-        show=True,
-        use_optimal_threshold=False,
-    ):
-        """
-        Plot a confusion matrix from predicted probabilities or model outputs.
-
-        Parameters
-        ----------
-        df : pd.DataFrame, optional
-            DataFrame containing actual and predicted probability columns.
-        outcome_cols : list of str, optional
-            Column names for actual binary outcomes in `df`.
-        pred_cols : list of str, optional
-            Column names for predicted probabilities in `df`.
-        models : dict, optional
-            Dictionary of trained models with `.predict_proba()` or `.predict()`
-            methods.
-        X_valid : pd.DataFrame, optional
-            Validation features to use for model predictions.
-        y_valid : array-like, optional
-            True labels corresponding to `X_valid`.
-        threshold : float, default=0.5
-            Threshold to binarize predicted probabilities when `optimal_threshold`
-            is False.
-        custom_name : str, optional
-            Custom name to use in the plot title.
-        model_name : str, optional
-            Key to select a specific model from `models`.
-        normalize : {'true', 'pred', 'all'}, optional
-            Normalization method for the confusion matrix.
-        cmap : str, default='Blues'
-            Matplotlib colormap for the heatmap.
-        show : bool, default=True
-            Whether to display the plot immediately.
-        use_optimal_threshold : bool, default=False
-            If True, uses model's `predict(..., optimal_threshold=True)` method
-            instead of manual thresholding.
-
-        Returns
-        -------
-        fig : matplotlib.figure.Figure
-            The resulting matplotlib figure object.
-        """
-
-        fig, ax = plt.subplots(figsize=(8, 8))
-        title = None
-
-        if outcome_cols and pred_cols and df is not None:
-            for outcome_col, pred_col in zip(outcome_cols, pred_cols):
-                y_true = df[outcome_col]
-                if use_optimal_threshold and hasattr(model, "predict"):
-                    y_pred = model.predict(X_valid, optimal_threshold=True)
-                else:
-                    y_pred = (df[pred_col] > threshold).astype(int)
-                cm = confusion_matrix(y_true, y_pred, normalize=normalize)
-                disp = ConfusionMatrixDisplay(
-                    confusion_matrix=cm,
-                    display_labels=[0, 1],
-                )
-                disp.plot(ax=ax, cmap=cmap, colorbar=False)
-
-                # Add TP, FP, TN, FN labels
-                labels = [["TN", "FP"], ["FN", "TP"]]
-                # Normalize for brightness scaling
-                norm_cm = cm.astype(float) / cm.max()
-
-                for i in range(2):
-                    for j in range(2):
-                        # Get colormap color
-                        color = plt.get_cmap(cmap)(norm_cm[i, j])
-                        brightness = (
-                            color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114
-                        )  # Grayscale brightness
-                        text_color = (
-                            "white" if brightness < 0.5 else "black"
-                        )  # Adaptive text color
-
-                        ax.text(
-                            j,
-                            i - 0.15,
-                            labels[i][j],  # Position slightly above the number
-                            ha="center",
-                            va="center",
-                            fontsize=12,
-                            color=text_color,
-                        )
-
-        if models and X_valid is not None and y_valid is not None:
-            if model_name:
-                model = models[model_name]
-                if use_optimal_threshold:
-                    y_pred = model.predict(X_valid, optimal_threshold=True)
-                else:
-                    y_pred = (model.predict_proba(X_valid)[:, 1] > threshold).astype(
-                        int
-                    )
-                cm = confusion_matrix(y_valid, y_pred, normalize=normalize)
-                disp = ConfusionMatrixDisplay(
-                    confusion_matrix=cm, display_labels=[0, 1]
-                )
-                disp.plot(ax=ax, cmap=cmap, colorbar=False)
-
-                # Add TP, FP, TN, FN labels
-                labels = [["TN", "FP"], ["FN", "TP"]]
-                norm_cm = cm.astype(float) / cm.max()
-
-                for i in range(2):
-                    for j in range(2):
-                        color = plt.get_cmap(cmap)(norm_cm[i, j])
-                        brightness = (
-                            color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114
-                        )
-                        text_color = "white" if brightness < 0.5 else "black"
-
-                        ax.text(
-                            j,
-                            i - 0.15,
-                            labels[i][j],
-                            ha="center",
-                            va="center",
-                            fontsize=12,
-                            color=text_color,
-                        )
-            else:
-                for _, model in models.items():
-                    y_pred = (model.predict_proba(X_valid)[:, 1] > threshold).astype(
-                        int
-                    )
-                    cm = confusion_matrix(
-                        y_valid,
-                        y_pred,
-                        normalize=normalize,
-                    )
-                    disp = ConfusionMatrixDisplay(
-                        confusion_matrix=cm,
-                        display_labels=[0, 1],
-                    )
-                    disp.plot(ax=ax, cmap=cmap, colorbar=False)
-
-                    # Add TP, FP, TN, FN labels
-                    labels = [["TN", "FP"], ["FN", "TP"]]
-                    norm_cm = cm.astype(float) / cm.max()
-
-                    for i in range(2):
-                        for j in range(2):
-                            color = plt.get_cmap(cmap)(norm_cm[i, j])
-                            brightness = (
-                                color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114
-                            )
-                            text_color = "white" if brightness < 0.5 else "black"
-
-                            ax.text(
-                                j,
-                                i - 0.15,
-                                labels[i][j],
-                                ha="center",
-                                va="center",
-                                fontsize=12,
-                                color=text_color,
-                            )
-
-        if title is None:
-            title = (
-                f"{custom_name} - Confusion Matrix"
-                if custom_name
-                else "Confusion Matrix"
-            )
-
-        plt.title(title)
-        self._save_plot(title)
-        if show:
-            plt.show()
-
-        return fig
-
-    def plot_calibration_curve(
-        self,
-        df=None,
-        outcome_cols=None,
-        pred_cols=None,
-        models=None,
-        X_valid=None,
-        y_valid=None,
-        pred_probs_df=None,
-        model_name=None,
-        custom_name=None,
-        n_bins=10,
-        show=True,
-    ):
-        """
-        Plot calibration curves to assess the agreement between predicted
-        probabilities and actual outcomes.
-
-        Parameters
-        ----------
-        df : pd.DataFrame, optional
-            DataFrame containing actual and predicted probability columns.
-        outcome_cols : list of str, optional
-            Column names for actual binary outcomes in `df`.
-        pred_cols : list of str, optional
-            Column names for predicted probabilities in `df`.
-        models : dict, optional
-            Dictionary of trained models with `.predict_proba()` methods.
-        X_valid : pd.DataFrame, optional
-            Validation features for generating model predictions.
-        y_valid : array-like, optional
-            True binary labels corresponding to `X_valid`.
-        pred_probs_df : pd.DataFrame, optional
-            DataFrame of predicted probabilities (one column per model or method).
-        model_name : str, optional
-            Key to select a specific model from `models`.
-        custom_name : str, optional
-            Custom title to display on the plot.
-        n_bins : int, default=10
-            Number of bins to use when grouping predicted probabilities for
-            calibration.
-        show : bool, default=True
-            Whether to display the plot immediately.
-
-        Returns
-        -------
-        fig : matplotlib.figure.Figure
-            The resulting matplotlib figure object.
-        """
-
-        fig, _ = plt.subplots(figsize=(8, 8))
-
-        # Handle predictions and true labels
-        if df is not None and outcome_cols and pred_cols:
-            for outcome_col, pred_col in zip(outcome_cols, pred_cols):
-                y_true = df[outcome_col]
-                y_prob = df[pred_col]
-                frac_pos, mean_pred = calibration_curve(
-                    y_true,
-                    y_prob,
-                    n_bins=n_bins,
-                )
-                brier = brier_score_loss(y_true, y_prob)
-                plt.plot(
-                    mean_pred,
-                    frac_pos,
-                    marker="o",
-                    label=f"{pred_col} (Brier={brier:.3f})",
-                )
-
-        elif models and X_valid is not None and y_valid is not None:
-            if model_name:
-                y_prob = models[model_name].predict_proba(X_valid)[:, 1]
-                frac_pos, mean_pred = calibration_curve(
-                    y_valid,
-                    y_prob,
-                    n_bins=n_bins,
-                )
-                brier = brier_score_loss(y_valid, y_prob)
-                plt.plot(
-                    mean_pred,
-                    frac_pos,
-                    marker="o",
-                    label=f"{model_name} (Brier={brier:.3f})",
-                )
-            else:
-                for name, model in models.items():
-                    y_prob = model.predict_proba(X_valid)[:, 1]
-                    frac_pos, mean_pred = calibration_curve(
-                        y_valid,
-                        y_prob,
-                        n_bins=n_bins,
-                    )
-                    brier = brier_score_loss(y_valid, y_prob)
-                    plt.plot(
-                        mean_pred,
-                        frac_pos,
-                        marker="o",
-                        label=f"{name} (Brier={brier:.3f})",
-                    )
-
-        elif pred_probs_df is not None and y_valid is not None:
-            for col in pred_probs_df.columns:
-                y_prob = pred_probs_df[col].values
-                frac_pos, mean_pred = calibration_curve(
-                    y_valid,
-                    y_prob,
-                    n_bins=n_bins,
-                )
-                brier = brier_score_loss(y_valid, y_prob)
-                plt.plot(
-                    mean_pred,
-                    frac_pos,
-                    marker="o",
-                    label=f"{col} (Brier={brier:.3f})",
-                )
-
-        # Perfect calibration line
-        plt.plot([0, 1], [0, 1], "k--", label="Perfectly Calibrated")
-        plt.xlabel("Mean Predicted Probability")
-        plt.ylabel("Fraction of Positives")
-        plt.legend(loc="lower right")
-
-        # Set title with custom_name or default to "Calibration Curve"
-        title = custom_name if custom_name else "Calibration Curve"
-        plt.title(title)
-        self._save_plot(title)
-        if show:
-            plt.show()
-
-        return fig
-
-    def plot_metrics_vs_thresholds(
-        self,
-        models=None,
-        X_valid=None,
-        y_valid=None,
-        df=None,
-        outcome_cols=None,
-        pred_cols=None,
-        pred_probs_df=None,
-        model_name=None,
-        custom_name=None,
-        scoring=None,
-        show=True,
-    ):
-        """
-        Plot Precision, Recall, F1 Score, and Specificity against thresholds,
-        automatically marking the optimal threshold from the model.
-
-        Parameters:
-        -----------
-        models : dict, optional
-            Dictionary of model names and their fitted instances.
-        X_valid : array-like, optional
-            Validation features for the models.
-        y_valid : array-like or pandas.Series, optional
-            True labels for validation data.
-        df : pandas.DataFrame, optional
-            DataFrame containing true outcomes and predicted probabilities.
-        outcome_cols : list, optional
-            Column names in df for true outcomes.
-        pred_cols : list, optional
-            Column names in df for predicted probabilities.
-        pred_probs_df : pandas.DataFrame, optional
-            DataFrame with precomputed predicted probabilities.
-        model_name : str, optional
-            Specific model name to plot.
-        custom_name : str, optional
-            Custom name for the plot title.
-        show : bool, optional (default=True)
-            Whether to display the plot.
-
-        Returns:
-        --------
-        fig : matplotlib.figure.Figure
-            The generated figure object.
-        """
-
-        fig, ax = plt.subplots(figsize=(10, 6))
-        title = custom_name or "Precision, Recall, F1, Specificity vs. Thresholds"
-
-        def plot_curves(
-            y_true,
-            y_pred_probs,
-            threshold,
-            label_prefix="",
-        ):
-            precision, recall, thresholds = precision_recall_curve(
-                y_true,
-                y_pred_probs,
-            )
-            # Avoid div by zero
-            f1_scores = 2 * (precision * recall) / (precision + recall + 1e-9)
-            fpr, _, roc_thresholds = roc_curve(y_true, y_pred_probs)
-            specificity = 1 - fpr
-
-            ax.plot(
-                thresholds,
-                f1_scores[:-1],
-                label=f"{label_prefix}F1 Score",
-                color="red",
-            )
-            ax.plot(
-                thresholds,
-                recall[:-1],
-                label=f"{label_prefix}Recall",
-                color="green",
-            )
-            ax.plot(
-                thresholds,
-                precision[:-1],
-                label=f"{label_prefix}Precision",
-                color="blue",
-            )
-            ax.plot(
-                roc_thresholds,
-                specificity,
-                label=f"{label_prefix}Specificity",
-                color="purple",
-            )
-
-            # Add vertical line for the model's threshold
-            ax.axvline(
-                x=float(threshold),  # Ensure it's a float
-                color="black",
-                linestyle="--",
-                linewidth=2,
-                label=f"{label_prefix}Threshold ({float(threshold):.2f})",
-            )
-
-        # Case 1: Direct model predictions
-        if models and X_valid is not None and y_valid is not None:
-            y_valid = y_valid.squeeze()
-            if model_name:
-                model = models[model_name]
-                # Get the threshold dictionary
-                threshold_dict = getattr(model, "threshold", {})
-                # Extract using `scoring`
-                threshold = float(threshold_dict.get(scoring, 0.5))
-                plot_curves(
-                    y_valid,
-                    model.predict_proba(X_valid)[:, 1],
-                    threshold,
-                    label_prefix=f"{model_name} ",
-                )
-            else:
-                for name, model in models.items():
-                    threshold_dict = getattr(model, "threshold", {})
-                    # Extract using `scoring`
-                    threshold = float(threshold_dict.get(scoring, 0.5))
-                    plot_curves(
-                        y_valid,
-                        model.predict_proba(X_valid)[:, 1],
-                        threshold,
-                        label_prefix=f"{name} ",
-                    )
-
-        # Case 2: Provided dataframe with outcome/prediction columns
-        # (defaults to 0.5)
-        elif df is not None and outcome_cols and pred_cols:
-            for outcome_col, pred_col in zip(outcome_cols, pred_cols):
-                plot_curves(
-                    df[outcome_col],
-                    df[pred_col],
-                    threshold=0.5,
-                    label_prefix=f"{pred_col} ",
-                )
-
-        # Case 3: Precomputed prediction probabilities DataFrame with y_valid
-        # (defaults to 0.5)
-        elif pred_probs_df is not None and y_valid is not None:
-            y_valid = y_valid.squeeze()
-            for col in pred_probs_df.columns:
-                plot_curves(
-                    y_valid,
-                    pred_probs_df[col].values,
-                    threshold=0.5,
-                    label_prefix=f"{col} ",
-                )
-
-        ax.set_title(title)
-        ax.set_xlabel("Thresholds")
-        ax.set_ylabel("Metrics")
-        ax.legend(loc="best")
-        ax.grid()
-
-        if show:
-            plt.show()
-
-        return fig
-
-
 ################################################################################
 ####################### MLFlow Models and Artifacts ############################
 ################################################################################
@@ -2160,3 +1461,140 @@ def add_pairwise_embedding_features(
         )
 
     return df
+
+################################################################################
+#################### Actual vs. Predicted Regression Plots #####################
+################################################################################
+
+
+def plot_actual_vs_predicted(
+    y_true: pd.Series,
+    y_pred: pd.Series,
+    title: str = "Actual vs Predicted Fatalities",
+):
+    """
+    Scatter plot of observed vs predicted fatalities
+    on the original (count) scale.
+
+    Inputs are expected to be log(1 + fatalities).
+    """
+
+    # Inverse transform to original scale
+    y_true = np.expm1(y_true)
+    y_pred = np.expm1(y_pred)
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+
+    ax.scatter(
+        y_true,
+        y_pred,
+        alpha=0.3,
+        s=10,
+    )
+
+    lims = [
+        min(y_true.min(), y_pred.min()),
+        max(y_true.max(), y_pred.max()),
+    ]
+
+    ax.plot(lims, lims, linewidth=1)
+
+    ax.set_xlabel("Observed fatalities")
+    ax.set_ylabel("Predicted fatalities")
+    ax.set_title(title)
+
+    # Optional: uncomment if you want log-scaled axes
+    # ax.set_xscale("log")
+    # ax.set_yscale("log")
+
+    fig.tight_layout()
+    return fig
+
+
+
+################################################################################
+############# Cumulative Fatalities Captured (impact curve) Plots ##############
+################################################################################
+
+
+def plot_cumulative_fatalities_captured(
+    y_true_log: pd.Series,
+    y_pred_log: pd.Series,
+    model_name: str = "Model",
+    title: str = "Cumulative Fatalities Captured",
+    return_table: bool = False,
+):
+    """
+    Plot cumulative gains curve showing fraction of total fatalities captured
+    as events are ranked by predicted severity.
+
+    Optionally returns the underlying cumulative table.
+    """
+
+    df = pd.DataFrame({
+        "fatal_true": np.expm1(y_true_log),
+        "fatal_pred": np.expm1(y_pred_log),
+    })
+
+    df = df.sort_values("fatal_pred", ascending=False)
+
+    cum_fatalities = df["fatal_true"].cumsum()
+    total_fatalities = cum_fatalities.iloc[-1]
+
+    cum_frac = cum_fatalities / total_fatalities
+    event_frac = np.arange(1, len(df) + 1) / len(df)
+
+    # area under cumulative curve
+    auc_capture = np.trapz(cum_frac.values, event_frac)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+
+    ax.plot(
+        event_frac,
+        cum_frac,
+        label=f"{model_name} (AUC = {auc_capture:.3f})",
+        linewidth=2,
+    )
+    ax.plot(event_frac, event_frac, "--", color="gray", label="Random")
+
+    ax.set_xlabel("Fraction of Events")
+    ax.set_ylabel("Fraction of Total Fatalities Captured")
+    ax.set_title(title)
+    ax.legend()
+
+    fig.tight_layout()
+
+    if return_table:
+        table = pd.DataFrame({
+            "event_fraction": event_frac,
+            "cumulative_fatalities": cum_fatalities.values,
+            "cumulative_fraction": cum_frac.values,
+        })
+        return fig, table
+
+    return fig
+
+def print_capture_summary(
+    capture_table: pd.DataFrame,
+    split_name: str,
+    ks=(0.01, 0.05, 0.10, 0.20, 0.30),
+):
+    print("\n" + "=" * 70)
+    print(f"CUMULATIVE FATALITY CAPTURE SUMMARY ({split_name})")
+    print("=" * 70)
+
+    for k in ks:
+        idx = int(np.ceil(k * len(capture_table))) - 1
+        idx = max(idx, 0)
+
+        frac_events = capture_table.iloc[idx]["event_fraction"]
+        frac_fatal = capture_table.iloc[idx]["cumulative_fraction"]
+
+        print(
+            f"Top {int(k*100):>2}% events "
+            f"→ {frac_fatal*100:6.2f}% of fatalities"
+        )
+
+    print("\nFirst 5 rows of capture table:")
+    print(capture_table.head().round(4))
+    print("=" * 70 + "\n")
