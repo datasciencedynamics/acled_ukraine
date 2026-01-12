@@ -13,17 +13,16 @@ PROJECT_DIRECTORY := $(abspath $(MAKEFILE_DIR))
 ############################## Training Globals ################################
 
 # Define variables for looping
-OUTCOMES = income
-PIPELINES = orig smote under orig_rfe smote_rfe under_rfe
-SCORING = average_precision
+OUTCOMES = fatalities
+PIPELINES = orig orig_rfe
+SCORING = r2
 PRETRAINED ?= 0  # 0 if you want to train the models, 1 if calibrate pretrained
 
 ############################# Production Globals ###############################
 
 # Model outcome variable used in production 
-EXPLAN_OUTCOME = income # explainer outcome variable
-PROD_OUTCOME = income # production outcome variable
-
+EXPLAN_OUTCOME = fatalities # explainer outcome variable
+PROD_OUTCOME = fatalities # production outcome variable
 
 # ------------------------------------------------------------------------------
 # COMMANDS
@@ -199,134 +198,156 @@ preproc_pipeline: data_gen data_prep_preprocessing_training feat_gen_training
 ########################## RFE, Imb Learn Models ###############################
 ################################################################################
 
-train_logistic_regression:
+### Train Linear Regression 
+train_lr:
 	@echo "Pretrained is set to: $(PRETRAINED)"
-	@for outcome in $(OUTCOMES); do \
-		for pipeline in $(PIPELINES); do \
-			mkdir -p models/results/$$outcome; \
+	@for o in $(OUTCOMES); do \
+		mkdir -p models/results/$$o; \
+		for p in $(PIPELINES); do \
 			"$(PYTHON_INTERPRETER)" $(PROJECT_DIRECTORY)/modeling/train.py \
 				--model-type lr \
-				--pipeline-type "$$pipeline" \
-				--labels-path ./data/processed/y_$$outcome.parquet \
-				--outcome "$$outcome" \
-				--pretrained "$(PRETRAINED)" \
-				--scoring "$(SCORING)" \
-				2>&1 | tee models/results/$$outcome/lr_$$pipeline$$( [ "$(PRETRAINED)" -eq 1 ] && echo "_prefit" ).txt; \
+				--pipeline-type $$p \
+				--outcome $$o \
+				--labels-path ./data/processed/y_$$o.parquet \
+				--features-path ./data/processed/X.parquet \
+				--pretrained $(PRETRAINED) \
+				--scoring $(SCORING) \
+				2>&1 | tee models/results/$$o/lr_$$p.txt; \
 		done; \
 	done
 
-train_random_forest:
+### Train Lasso Regression
+train_lasso:
 	@echo "Pretrained is set to: $(PRETRAINED)"
-	@for outcome in $(OUTCOMES); do \
-		for pipeline in $(PIPELINES); do \
-			mkdir -p models/results/$$outcome; \
+	@for o in $(OUTCOMES); do \
+		mkdir -p models/results/$$o; \
+		for p in $(PIPELINES); do \
 			"$(PYTHON_INTERPRETER)" $(PROJECT_DIRECTORY)/modeling/train.py \
-				--model-type rf \
-				--pipeline-type "$$pipeline" \
-				--labels-path ./data/processed/y_$$outcome.parquet \
-				--outcome "$$outcome" \
-				--pretrained "$(PRETRAINED)" \
-				--scoring "$(SCORING)" \
-				2>&1 | tee models/results/$$outcome/rf_$$pipeline$$( [ "$(PRETRAINED)" -eq 1 ] && echo "_prefit" ).txt; \
+				--model-type lasso \
+				--pipeline-type $$p \
+				--outcome $$o \
+				--labels-path ./data/processed/y_$$o.parquet \
+				--features-path ./data/processed/X.parquet \
+				--pretrained $(PRETRAINED) \
+				--scoring $(SCORING) \
+				2>&1 | tee models/results/$$o/lasso_$$p.txt; \
 		done; \
 	done
 
-train_xgboost:
+### Train XGBoost Regression
+train_xgb:
 	@echo "Pretrained is set to: $(PRETRAINED)"
-	@for outcome in $(OUTCOMES); do \
-		for pipeline in $(PIPELINES); do \
-			mkdir -p models/results/$$outcome; \
+	@for o in $(OUTCOMES); do \
+		mkdir -p models/results/$$o; \
+		for p in $(PIPELINES); do \
 			"$(PYTHON_INTERPRETER)" $(PROJECT_DIRECTORY)/modeling/train.py \
 				--model-type xgb \
-				--pipeline-type "$$pipeline" \
-				--labels-path ./data/processed/y_$$outcome.parquet \
-				--outcome "$$outcome" \
-				--pretrained "$(PRETRAINED)" \
-				--scoring "$(SCORING)" \
-				2>&1 | tee models/results/$$outcome/xgb_$$pipeline$$( [ "$(PRETRAINED)" -eq 1 ] && echo "_prefit" ).txt; \
+				--pipeline-type $$p \
+				--outcome $$o \
+				--labels-path ./data/processed/y_$$o.parquet \
+				--features-path ./data/processed/X.parquet \
+				--pretrained $(PRETRAINED) \
+				--scoring $(SCORING) \
+				2>&1 | tee models/results/$$o/xgb_$$p.txt; \
 		done; \
 	done
 
-train_catboost:
+### Train CatBoost Regression
+train_cat:
 	@echo "Pretrained is set to: $(PRETRAINED)"
-	@for outcome in $(OUTCOMES); do \
-		for pipeline in $(PIPELINES); do \
-			mkdir -p models/results/$$outcome; \
+	@for o in $(OUTCOMES); do \
+		mkdir -p models/results/$$o; \
+		for p in $(PIPELINES); do \
 			"$(PYTHON_INTERPRETER)" $(PROJECT_DIRECTORY)/modeling/train.py \
 				--model-type cat \
-				--pipeline-type "$$pipeline" \
-				--labels-path ./data/processed/y_$$outcome.parquet \
-				--outcome "$$outcome" \
-				--pretrained "$(PRETRAINED)" \
-				--scoring "$(SCORING)" \
-				2>&1 | tee models/results/$$outcome/cat_$$pipeline$$( [ "$(PRETRAINED)" -eq 1 ] && echo "_prefit" ).txt; \
+				--pipeline-type $$p \
+				--outcome $$o \
+				--labels-path ./data/processed/y_$$o.parquet \
+				--features-path ./data/processed/X.parquet \
+				--pretrained $(PRETRAINED) \
+				--scoring $(SCORING) \
+				2>&1 | tee models/results/$$o/cat_$$p.txt; \
 		done; \
 	done
 
-train_all_models: train_logistic_regression train_random_forest train_xgboost train_catboost
+
+train_all_models: train_lr train_lasso train_xgb train_cat
 
 ################################################################################
 ############################### Model Evaluation ###############################
 ################################################################################
 
-eval_logistic_regression:
-	@for outcome in $(OUTCOMES); do \
-		for pipeline in $(PIPELINES); do \
-			$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/modeling/evaluation.py \
-			--model-type lr \
-			--pipeline-type $$pipeline \
-			--labels-path ./data/processed/y_$$outcome.parquet \
-			--outcome $$outcome \
-			--scoring $(SCORING) 2>&1 | tee models/eval/$$outcome/lr_eval_$$pipeline.txt; \
+### Evaluate Linear Regression
+eval_lr:
+	@for o in $(OUTCOMES); do \
+		mkdir -p models/eval/$$o; \
+		for p in $(PIPELINES); do \
+			"$(PYTHON_INTERPRETER)" $(PROJECT_DIRECTORY)/modeling/evaluation.py \
+				--model-type lr \
+				--pipeline-type $$p \
+				--outcome $$o \
+				--outcome-name $$o \
+				--labels-path ./data/processed/y_$$o.parquet \
+				--features-path ./data/processed/X.parquet \
+				2>&1 | tee models/eval/$$o/eval_lr_$$p.txt; \
 		done; \
 	done
 
-# Loop through each outcome for Random Forest
-eval_random_forest:
-	@for outcome in $(OUTCOMES); do \
-		for pipeline in $(PIPELINES); do \
-			$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/modeling/evaluation.py \
-			--model-type rf \
-			--pipeline-type $$pipeline \
-			--labels-path ./data/processed/y_$$outcome.parquet \
-			--outcome $$outcome \
-			--scoring $(SCORING) 2>&1 | tee models/eval/$$outcome/rf_eval_$$pipeline.txt; \
+### Evaluate Lasso Regression
+eval_lasso:
+	@for o in $(OUTCOMES); do \
+		mkdir -p models/eval/$$o; \
+		for p in $(PIPELINES); do \
+			"$(PYTHON_INTERPRETER)" $(PROJECT_DIRECTORY)/modeling/evaluation.py \
+				--model-type lasso \
+				--pipeline-type $$p \
+				--outcome $$o \
+				--outcome-name $$o \
+				--labels-path ./data/processed/y_$$o.parquet \
+				--features-path ./data/processed/X.parquet \
+				2>&1 | tee models/eval/$$o/eval_lasso_$$p.txt; \
 		done; \
 	done
 
-# Loop through each outcome for XGBoost
-eval_xgboost:
-	@for outcome in $(OUTCOMES); do \
-		for pipeline in $(PIPELINES); do \
-			$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/modeling/evaluation.py \
-			--model-type xgb \
-			--pipeline-type $$pipeline \
-			--labels-path ./data/processed/y_$$outcome.parquet \
-			--outcome $$outcome \
-			--scoring $(SCORING) 2>&1 | tee models/eval/$$outcome/xgb_eval_$$pipeline.txt; \
+### Evaluate XGBoost Regression
+eval_xgb:
+	@for o in $(OUTCOMES); do \
+		mkdir -p models/eval/$$o; \
+		for p in $(PIPELINES); do \
+			"$(PYTHON_INTERPRETER)" $(PROJECT_DIRECTORY)/modeling/evaluation.py \
+				--model-type xgb \
+				--pipeline-type $$p \
+				--outcome $$o \
+				--outcome-name $$o \
+				--labels-path ./data/processed/y_$$o.parquet \
+				--features-path ./data/processed/X.parquet \
+				2>&1 | tee models/eval/$$o/eval_xgb_$$p.txt; \
 		done; \
 	done
 
-# Loop through each outcome for CatBoost
-eval_catboost:
-	@for outcome in $(OUTCOMES); do \
-		for pipeline in $(PIPELINES); do \
-			$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/modeling/evaluation.py \
-			--model-type cat \
-			--pipeline-type $$pipeline \
-			--labels-path ./data/processed/y_$$outcome.parquet \
-			--outcome $$outcome \
-			--scoring $(SCORING) 2>&1 | tee models/eval/$$outcome/cat_eval_$$pipeline.txt; \
+### Evaluate CatBoost Regression
+eval_cat:
+	@for o in $(OUTCOMES); do \
+		mkdir -p models/eval/$$o; \
+		for p in $(PIPELINES); do \
+			"$(PYTHON_INTERPRETER)" $(PROJECT_DIRECTORY)/modeling/evaluation.py \
+				--model-type cat \
+				--pipeline-type $$p \
+				--outcome $$o \
+				--outcome-name $$o \
+				--labels-path ./data/processed/y_$$o.parquet \
+				--features-path ./data/processed/X.parquet \
+				2>&1 | tee models/eval/$$o/eval_cat_$$p.txt; \
 		done; \
 	done
+	
+eval_all_models: eval_lr eval_lasso eval_xgb eval_cat
 
-eval_all_models: eval_logistic_regression eval_random_forest eval_xgboost eval_catboost
 
+################################ Modeling Pipeline #############################
+### Shortcut to run full modeling pipeline: training, evaluation
 ################################################################################
-################### Train and Evaluate All Models Pipeline #####################
-################################################################################
-
-train_eval_pipeline: train_all_models eval_all_models
+modeling_train_eval_pipeline: train_all_models eval_all_models
 
 ################################################################################
 #################### Best Model Explainer and Explanations #####################

@@ -20,20 +20,15 @@ from imblearn.over_sampling import SMOTE
 from sklearn.feature_selection import RFE
 
 from sklearn.metrics import (
-    auc,
-    roc_curve,
     confusion_matrix,
     ConfusionMatrixDisplay,
     precision_score,
     recall_score,
-    roc_auc_score,
     brier_score_loss,
     precision_score,
     average_precision_score,
-    precision_recall_curve,
 )
 
-from sklearn.calibration import calibration_curve
 from tqdm import tqdm
 
 from core.constants import (
@@ -467,113 +462,6 @@ def highlight_null(val):
     """
     color = "background-color: red" if pd.isnull(val) else ""
     return color
-
-
-################################################################################
-########################  Metrics to Store in MLFlow ###########################
-
-########################### Report Model Metrics ###############################
-################################################################################
-
-
-def metrics_report(
-    df=None,
-    outcome_cols=None,
-    pred_cols=None,
-    models=None,
-    X_valid=None,
-    y_valid=None,
-    pred_probs_df=None,
-):
-    """
-    Generate a DataFrame of model metrics for given models or predictions.
-
-    Parameters:
-    df (DataFrame, optional): DataFrame containing outcome and prediction cols.
-    outcome_cols (list, optional): List of outcome column names in df.
-    pred_cols (list, optional): List of prediction column names in df.
-    models (dict, optional): Dict where key is model name and value is model.
-    X_valid (DataFrame, optional): DataFrame with validation data.
-    y_valid (Series, optional): Series with outcome data for validation set.
-    pred_probs_df (DataFrame, optional): DataFrame with predicted probabilities.
-
-    Returns:
-    metrics_df (DataFrame): DataFrame containing model metrics.
-    """
-    metrics = {}
-
-    # Calculate metrics for each outcome_col-pred_col pair in df
-    if outcome_cols is not None and pred_cols is not None and df is not None:
-        for outcome_col, pred_col in zip(outcome_cols, pred_cols):
-            y_true = df[outcome_col]
-            y_pred_proba = df[pred_col]
-            y_pred = [1 if prob > 0.5 else 0 for prob in y_pred_proba]
-            tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-            precision = precision_score(y_true, y_pred)
-            recall = recall_score(y_true, y_pred)
-            roc_auc = roc_auc_score(y_true, y_pred_proba)
-            brier_score = brier_score_loss(y_true, y_pred_proba)
-            avg_precision = average_precision_score(y_true, y_pred_proba)
-            specificity = tn / (tn + fp)
-            metrics[pred_col] = {
-                "Precision/PPV": precision,
-                "Average Precision": avg_precision,
-                "Sensitivity": recall,
-                "Specificity": specificity,
-                "AUC ROC": roc_auc,
-                "Brier Score": brier_score,
-            }
-
-    if models is not None and X_valid is not None and y_valid is not None:
-        for name, model in models.items():
-            y_pred = model.predict(X_valid)
-            # Attempt to use the predict_proba method if available
-            try:
-                y_pred_proba = model.predict_proba(X_valid)[:, 1]
-            except AttributeError:
-                # Fallback for models without predict_proba method
-                y_pred_proba = model.predict(X_valid)
-
-            tn, fp, _, _ = confusion_matrix(y_valid, y_pred).ravel()
-            precision = precision_score(y_valid, y_pred)
-            recall = recall_score(y_valid, y_pred)
-            roc_auc = roc_auc_score(y_valid, y_pred_proba)
-            brier_score = brier_score_loss(y_valid, y_pred_proba)
-            avg_precision = average_precision_score(y_valid, y_pred_proba)
-            specificity = tn / (tn + fp)
-            metrics[name] = {
-                "Precision/PPV": precision,
-                "Average Precision": avg_precision,
-                "Sensitivity": recall,
-                "Specificity": specificity,
-                "AUC ROC": roc_auc,
-                "Brier Score": brier_score,
-            }
-
-    # Calculate metrics for each column in pred_probs_df
-    if pred_probs_df is not None:
-        for col in pred_probs_df.columns:
-            y_pred_proba = pred_probs_df[col]
-            y_pred = [1 if prob > 0.5 else 0 for prob in y_pred_proba]
-            tn, fp, _, _ = confusion_matrix(y_valid, y_pred).ravel()
-            precision = precision_score(y_valid, y_pred)
-            recall = recall_score(y_valid, y_pred)
-            roc_auc = roc_auc_score(y_valid, y_pred_proba)
-            brier_score = brier_score_loss(y_valid, y_pred_proba)
-            avg_precision = average_precision_score(y_valid, y_pred_proba)
-            specificity = tn / (tn + fp)
-            metrics[col] = {
-                "Precision/PPV": precision,
-                "Average Precision": avg_precision,
-                "Sensitivity": recall,
-                "Specificity": specificity,
-                "AUC ROC": roc_auc,
-                "Brier Score": brier_score,
-            }
-
-    metrics_df = pd.DataFrame(metrics).round(3)
-    metrics_df["Mean"] = metrics_df.mean(axis=1).round(3)
-    return metrics_df
 
 ################################################################################
 ####################### MLFlow Models and Artifacts ############################
