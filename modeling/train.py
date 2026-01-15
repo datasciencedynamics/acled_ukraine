@@ -36,7 +36,7 @@ app = typer.Typer()
 @app.command()
 def main(
     # ---- REPLACE DEFAULT PATHS AS APPROPRIATE ---
-    model_type: str = "xgb",
+    model_type: str = "lr",
     pipeline_type: str = "orig",
     outcome: str = target_outcome,
     features_path: Path = PROCESSED_DATA_DIR / "X.parquet",
@@ -147,6 +147,7 @@ def main(
             n_iter=n_iter,
             scoring=[scoring],
             random_state=rstate,
+            # stratify_y=True,
             stratify_cols=["admin1"],
             boost_early=early_stop,
             imbalance_sampler=sampler,

@@ -35,7 +35,7 @@ app = typer.Typer()
 
 @app.command()
 def main(
-    model_type: str = "xgb",
+    model_type: str = "lr",
     pipeline_type: str = "orig",
     outcome: str = target_outcome,
     features_path: Path = PROCESSED_DATA_DIR / "X.parquet",

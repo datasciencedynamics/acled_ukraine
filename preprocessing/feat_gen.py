@@ -69,6 +69,7 @@ def main(
 
         ############### Store Final List of Features for Production ##
 
+        ## TODO: L.S. un-hard code target variable name and move to constants.py
         ## Separate features (X) and target (y)
         X = df.drop(columns=["fatalities"]).copy()
         y = np.log1p(df["fatalities"]).copy() # keep as DataFrame for now

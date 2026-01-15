@@ -89,7 +89,7 @@ def main(
 
         # Extract column names to a list
         string_cols_list = df_object.columns.to_list()
-
+        
         ########################################################################
         # Step 3. Save and Log String Column List
         ########################################################################

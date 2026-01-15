@@ -3,13 +3,11 @@
 import typer
 import pandas as pd
 
-
 ################################################################################
 
 from core.constants import var_index
 
 app = typer.Typer()
-
 
 @app.command()
 def main(
@@ -25,7 +23,7 @@ def main(
     """
     ############################################################################
     # Step 1. Read the input data file
-    ############################################################################a
+    ############################################################################
 
     # read in the data and set the index as 'event_id_cnty'
     df = pd.read_csv(input_data_file)

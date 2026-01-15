@@ -168,6 +168,8 @@ create_folders:
 ####################### Preprocessing (+) Dataprep Pipeline ####################
 ################################################################################
 
+## TODO:  L.S. - update make and/or python scripts to adjust if input file does not contain csv
+
 .PHONY: data_gen
 data_gen:
 	$(PYTHON_INTERPRETER) preprocessing/data_gen.py \
