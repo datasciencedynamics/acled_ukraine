@@ -69,11 +69,9 @@ def main(
 
         ############### Store Final List of Features for Production ##
 
-        ## TODO: L.S. un-hard code target variable name and move to constants.py
         ## Separate features (X) and target (y)
-        X = df.drop(columns=["fatalities"]).copy()
-        y = np.log1p(df["fatalities"]).copy() # keep as DataFrame for now
-
+        X = df.drop(columns=[target_outcome]).copy()
+        y = np.log1p(df[target_outcome]).copy()  # keep as DataFrame for now
 
         ## Log first five rows of features and targets
         print(f"\n{'=' * 80}\nX\n{'=' * 80}\n{X.head()}")
@@ -114,7 +112,6 @@ def main(
 
         # Dropping "_missing" cols strings will be created next
         X_columns_list = [col for col in X_columns_list if "_missing" not in col]
-
 
     ############################################################################
     ################ Step 7: Store Final List of Features for Production #######
