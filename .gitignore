@@ -170,4 +170,4 @@ Images/
 **/results*/
 
 # Ignore images
-images/
+images/.DS_Store
