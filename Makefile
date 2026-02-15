@@ -182,11 +182,11 @@ build_text_base:
 		--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
 		--output-data-file ./data/processed/text_base.parquet
 
-.PHONY: clean_text
-clean_text:
-	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/build_catboost_text.py \
-		--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
-		--output-data-file ./data/processed/catboost_text.parquet
+.PHONY: build_text_embeddings
+build_text_embeddings:
+	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/build_text_embeddings.py \
+		--input-data-file ./data/processed/text_base.parquet \
+		--output-data-file ./data/processed/text_embeddings.parquet
 
 .PHONY: data_prep_preprocessing_training
 data_prep_preprocessing_training:
@@ -204,7 +204,7 @@ feat_gen_training:
 	--data-path ./data/processed
 
 
-preproc_pipeline: data_gen data_prep_preprocessing_training feat_gen_training
+preproc_pipeline: data_gen build_text_base build_text_embeddings data_prep_preprocessing_training feat_gen_training
 
 ################################################################################
 ################################# Training #####################################
