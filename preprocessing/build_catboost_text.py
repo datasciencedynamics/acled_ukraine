@@ -1,15 +1,12 @@
+################################################################################
+######################### Import Requisite Libraries ###########################
 from pathlib import Path
 import pandas as pd
-import re
+import typer
 
+################################################################################
 
-def detect_project_root() -> Path:
-    cwd = Path.cwd()
-    if cwd.name == "notebooks":
-        return cwd.parent
-    # If running from src/preprocessing, this will typically be project root's /src sibling
-    # Adjust if your repo layout differs.
-    return cwd
+app = typer.Typer()
 
 
 def clean_notes_text_series(s: pd.Series) -> pd.Series:
@@ -19,9 +16,9 @@ def clean_notes_text_series(s: pd.Series) -> pd.Series:
     s = s.str.replace(r"\b[\w\.-]+@[\w\.-]+\.\w+\b", " ", regex=True)
 
     s = (
-        s.str.replace("’", "'", regex=False)
-         .str.replace("“", '"', regex=False)
-         .str.replace("”", '"', regex=False)
+        s.str.replace("'", "'", regex=False)
+         .str.replace(""", '"', regex=False)
+         .str.replace(""", '"', regex=False)
     )
 
     s = s.str.replace(r"[^a-z0-9\s\.\,\!\?\-']", " ", regex=True)
@@ -50,31 +47,96 @@ def remove_leading_date_phrase(notes: pd.Series) -> pd.Series:
     )
 
 
-def main() -> None:
-    project_root = detect_project_root()
-    data_dir = project_root / "data"
-    raw_path = data_dir / "raw" / "acled_ukraine_data_2026_01_02.parquet"
-    out_path = data_dir / "catboost_text.parquet"
+@app.command()
+def main(
+    input_data_file: str = "./data/raw/acled_ukraine_data_2026_01_02.parquet",
+    output_data_file: str = "./data/processed/catboost_text.parquet",
+) -> None:
+    """
+    Clean text data for CatBoost modeling.
 
-    df = pd.read_parquet(raw_path)[["event_id_cnty", "notes"]]
+    Args:
+        input_data_file (str): Path to input parquet file with 'notes' column.
+        output_data_file (str): Path to output parquet file.
+    """
+    
+    input_path = Path(input_data_file)
+    output_path = Path(output_data_file)
 
-    if not df["event_id_cnty"].is_unique:
-        raise ValueError("Primary key event_id_cnty is not unique in the raw file.")
+    ############################################################################
+    # Step 1. Read Input Data
+    ############################################################################
+    
+    print("Starting text preprocessing pipeline...")
+    print(f"Reading data from: {input_path}")
+    
+    # Read with index - event_id_cnty is the index
+    df = pd.read_parquet(input_path, columns=["notes"])
+    print(f"Loaded {len(df):,} rows")
+    
+    ############################################################################
+    # Step 2. Verify Index Uniqueness
+    ############################################################################
+    
+    # Index should already be unique since it's the index, but verify
+    if not df.index.is_unique:
+        raise ValueError("Index event_id_cnty is not unique in the raw file.")
+    print("Index uniqueness verified")
 
+    ############################################################################
+    # Step 3. Clean Text Data
+    ############################################################################
+    
+    print()
+    print("Cleaning text:")
+    print("  - Removing leading date phrases...")
     notes_clean = remove_leading_date_phrase(df["notes"])
+    
+    print("  - Applying text cleaning (lowercasing, removing URLs, emails, special chars)...")
     catboost_notes_clean = strip_leading_comma(clean_notes_text_series(notes_clean))
 
-    out = (
-        pd.DataFrame(
-            {"event_id_cnty": df["event_id_cnty"], "catboost_notes_clean": catboost_notes_clean}
-        )
-        .drop_duplicates(subset=["event_id_cnty"], keep="last")
+    ############################################################################
+    # Step 4. Build Output DataFrame
+    ############################################################################
+    
+    print()
+    print("Building output DataFrame...")
+    
+    # Create output with index preserved
+    out = pd.DataFrame(
+        {"catboost_notes_clean": catboost_notes_clean},
+        index=df.index
     )
+    # Index name should be preserved, but ensure it
+    out.index.name = "event_id_cnty"
+    
+    ############################################################################
+    # Step 5. Remove Duplicate Indices
+    ############################################################################
+    
+    # Drop duplicates if any exist (keeping last)
+    n_before = len(out)
+    out = out[~out.index.duplicated(keep='last')]
+    n_after = len(out)
+    if n_before > n_after:
+        print(f"  - Removed {n_before - n_after:,} duplicate indices")
 
-    data_dir.mkdir(parents=True, exist_ok=True)
-    out.to_parquet(out_path, index=False)
-    print(f"Saved: {out_path}  rows={len(out)} cols={out.shape[1]}")
+    ############################################################################
+    # Step 6. Save Processed Data
+    ############################################################################
+    
+    # Ensure output directory exists
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    print()
+    print(f"Saving to: {output_path}")
+    # Save with index
+    out.to_parquet(output_path)
+    print(f"Saved: {output_path}")
+    print(f"  Final shape: {len(out):,} rows x {out.shape[1]} column(s)")
+    print()
+    print("Preprocessing complete!")
 
 
 if __name__ == "__main__":
-    main()
+    app()

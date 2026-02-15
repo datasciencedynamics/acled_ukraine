@@ -176,6 +176,17 @@ data_gen:
 		--input-data-file "./data/raw/ACLED Data_2026-01-02.csv" \
 		--output-data-file "./data/raw/acled_ukraine_data_2026_01_02.parquet"
 
+.PHONY: build_text_base
+build_text_base:
+	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/build_text_base.py \
+		--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
+		--output-data-file ./data/processed/text_base.parquet
+
+.PHONY: clean_text
+clean_text:
+	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/build_catboost_text.py \
+		--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
+		--output-data-file ./data/processed/catboost_text.parquet
 
 .PHONY: data_prep_preprocessing_training
 data_prep_preprocessing_training:
