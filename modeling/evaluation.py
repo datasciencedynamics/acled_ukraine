@@ -19,6 +19,7 @@ from core.functions import (
 
 from core.constants import (
     target_outcome,
+    target_log_outcome,
     mlflow_models_data,
 )
 
@@ -33,54 +34,81 @@ app = typer.Typer()
 # Main CLI entry
 # ==================================================================
 
+
 @app.command()
 def main(
     model_type: str = "lr",
     pipeline_type: str = "orig",
-    outcome: str = target_outcome,
-    features_path: Path = PROCESSED_DATA_DIR / "X.parquet",
-    labels_path: Path = PROCESSED_DATA_DIR / f"y_{target_outcome}.parquet",
-    outcome_name: str = target_outcome,
+    outcome: str = target_log_outcome,
+    outcome_name: str = None,  # Optional: defaults to outcome
+    data_path: Path = PROCESSED_DATA_DIR,
 ):
+    """
+    Evaluate trained model on train/valid/test splits.
+
+    Args:
+        model_type: Model type (lr, lasso, xgb, cat)
+        pipeline_type: Pipeline type (orig, orig_rfe)
+        outcome: Outcome variable (fatalities or log_fatalities)
+        outcome_name: Optional override for outcome column name
+        data_path: Path to processed data directory
+    """
 
     # --------------------------------------------------------------
     # STEP 1: Resolve model metadata
     # --------------------------------------------------------------
     estimator_name = model_definitions[model_type]["estimator_name"]
 
+    # Default outcome_name to outcome if not provided
+    if outcome_name is None:
+        outcome_name = outcome
+
     run_name = f"{estimator_name}_{pipeline_type}_training"
     experiment_name = f"{outcome}_model"
 
-    print(run_name)
-    print(f"{estimator_name}_{outcome}")
+    print("\n" + "=" * 80)
+    print(f"EVALUATION: {run_name}")
+    print(f"Outcome: {outcome}")
+    print("=" * 80)
 
     # --------------------------------------------------------------
     # STEP 2: Load trained model from MLflow
     # --------------------------------------------------------------
+    print("\nLoading model from MLflow...")
     model = mlflow_load_model(
         experiment_name=experiment_name,
         run_name=run_name,
         model_name=f"{estimator_name}_{outcome}",
     )
+    print("Model loaded successfully")
 
     # --------------------------------------------------------------
-    # STEP 3: Load data
+    # STEP 3: Load temporal splits
     # --------------------------------------------------------------
-    X = pd.read_parquet(features_path)
-    y_all = pd.read_parquet(labels_path)
-    y = y_all[outcome_name]
+    print("\nLoading temporal splits...")
+
+    # Load X splits
+    X_train = pd.read_parquet(data_path / "X_train.parquet")
+    X_valid = pd.read_parquet(data_path / "X_valid.parquet")
+    X_test = pd.read_parquet(data_path / "X_test.parquet")
+
+    # Load y splits based on outcome
+    y_train = pd.read_parquet(data_path / f"y_train_{outcome}.parquet").iloc[:, 0]
+    y_valid = pd.read_parquet(data_path / f"y_valid_{outcome}.parquet").iloc[:, 0]
+    y_test = pd.read_parquet(data_path / f"y_test_{outcome}.parquet").iloc[:, 0]
+
+    print(f"Loaded splits:")
+    print(f"  Train: {X_train.shape[0]:,} samples")
+    print(f"  Valid: {X_valid.shape[0]:,} samples")
+    print(f"  Test:  {X_test.shape[0]:,} samples")
 
     # --------------------------------------------------------------
-    # STEP 4: Retrieve train, valid, test splits from model
+    # STEP 4: Store splits in dictionary
     # --------------------------------------------------------------
-    X_train, y_train = model.get_train_data(X, y)
-    X_valid, y_valid = model.get_valid_data(X, y)
-    X_test, y_test   = model.get_test_data(X, y)
-
     splits = {
         "train": (X_train, y_train),
         "valid": (X_valid, y_valid),
-        "test":  (X_test,  y_test),
+        "test": (X_test, y_test),
     }
 
     # --------------------------------------------------------------
@@ -110,15 +138,23 @@ def main(
             split_metrics[f"{split}_{k}"] = v
 
     # Log metrics once
+    print("\n" + "=" * 80)
+    print("Logging metrics to MLflow...")
+    print("=" * 80)
     log_mlflow_metrics(
         experiment_name=experiment_name,
         run_name=run_name,
         metrics=pd.Series(split_metrics),
     )
+    print("Metrics logged")
 
     # --------------------------------------------------------------
     # STEP 6: Plots and capture tables by split
     # --------------------------------------------------------------
+    print("\n" + "=" * 80)
+    print("Generating evaluation plots...")
+    print("=" * 80)
+
     all_figs = {}
     capture_tables = {}
 
@@ -154,15 +190,22 @@ def main(
     # --------------------------------------------------------------
     # STEP 7: Log plots (figures only)
     # --------------------------------------------------------------
+    print("\n" + "=" * 80)
+    print("Logging plots to MLflow...")
+    print("=" * 80)
     log_mlflow_metrics(
         experiment_name=experiment_name,
         run_name=run_name,
         images=all_figs,
     )
+    print("Plots logged")
 
     # --------------------------------------------------------------
     # STEP 8: Log capture tables as CSV artifacts
     # --------------------------------------------------------------
+    print("\n" + "=" * 80)
+    print("Logging capture tables to MLflow...")
+    print("=" * 80)
     for split, capture_df in capture_tables.items():
         mlflow_dumpArtifact(
             experiment_name=experiment_name,
@@ -172,18 +215,24 @@ def main(
             artifacts_data_path=mlflow_models_data,
             artifact_format="csv",
         )
+    print("Capture tables logged")
 
     # --------------------------------------------------------------
     # STEP 9: Log model parameters
     # --------------------------------------------------------------
+    print("\n" + "=" * 80)
+    print("Logging model parameters to MLflow...")
+    print("=" * 80)
     mlflow_log_parameters_model(
         experiment_name=experiment_name,
         run_name=run_name,
         model_name=f"{estimator_name}_{outcome}",
         model=model,
     )
+    print("Model parameters logged")
 
     logger.success("Model evaluation complete.")
+
 
 # ==================================================================
 if __name__ == "__main__":

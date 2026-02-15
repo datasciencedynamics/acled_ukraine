@@ -19,12 +19,33 @@ event_date = "event_date"  # event date column
 
 # variables to drop from dataset
 
-drop_vars = ["region", "location", "admin2", "admin3", "year", "country", 
-             "actor1", "actor2", "actor1_root", "actor2_root", "assoc_actor_1", 
-             "source", "source_scale", "assoc_actor_2", "inter1", "inter2", 
-             "event_type", "time_precision", "geo_precision", "timestamp", 
-             "disorder_type", "event_date", "latitude", "longitude", "tags", 
-             "notes"]  
+drop_vars = [
+    "region",
+    "location",
+    "admin2",
+    "admin3",
+    "year",
+    "country",
+    "actor1",
+    "actor2",
+    "actor1_root",
+    "actor2_root",
+    "assoc_actor_1",
+    "source",
+    "source_scale",
+    "assoc_actor_2",
+    "inter1",
+    "inter2",
+    "event_type",
+    "time_precision",
+    "geo_precision",
+    "timestamp",
+    "disorder_type",
+    "latitude",
+    "longitude",
+    "tags",
+    "notes",
+]
 
 ################################################################################
 ############################# Mlflow Variables #################################
@@ -85,3 +106,14 @@ shap_artifacts_data = "./mlruns/explainer"
 ############################### Target Outcome #################################
 
 target_outcome = "fatalities"
+target_log_outcome = "log_fatalities"
+
+
+################################################################################
+###########################  Temporal Configurations ###########################
+################################################################################
+
+# Temporal split configuration
+TRAIN_END_DATE = "2024-04-30"
+VALID_END_DATE = "2024-09-30"
+DATA_FILTER_DATE = "2025-01-01"  # Exclude incomplete data after this date

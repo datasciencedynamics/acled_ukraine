@@ -14,6 +14,7 @@ from core.constants import (
     exp_artifact_name,
     preproc_run_name,
     target_outcome,
+    target_log_outcome,
 )
 
 ################################################################################
@@ -38,118 +39,212 @@ def main(
     data_path: str = "./data/processed",
 ):
     """
-    Processes the input data file and generates feature space X and target variable y.
+    Processes split dataframes and generates X, y for each split.
 
     Args:
-        input_data_file (str): Path to the input parquet file.
+        input_data_file: Path to input data (used for inference stage)
+        stage: "training" or "inference"
+        data_path: Path to data directory
     """
 
     ############################################################################
-    ################ Step 4: Load Input Data ###################################
-    ############################################################################
-    # df already loaded from .parquet
-    # Example:
-    # df = pd.read_parquet("path_to_file.parquet")
-
-    # Read the input data file
-    df = pd.read_parquet(input_data_file)
-
-    try:
-        df.set_index(var_index, inplace=True)
-    except:
-        print("Index already set or 'var_index' doesn't exist in dataframe")
-    print("-" * 80)
-    print(f"# of DataFrame Columns: {df.shape[1]}")
-
-    ############################################################################
-    ################ Step 5: Training Stage ####################################
+    ################ Step 4: Training Stage ####################################
     ############################################################################
 
     if stage == "training":
 
-        ############### Store Final List of Features for Production ##
+        # Load the pre-split dataframes
+        print("\n" + "=" * 80)
+        print("Loading temporal splits...")
+        print("=" * 80)
 
-        ## Separate features (X) and target (y)
-        X = df.drop(columns=[target_outcome]).copy()
-        y = np.log1p(df[target_outcome]).copy()  # keep as DataFrame for now
+        train_df = pd.read_parquet(os.path.join(data_path, "train_df.parquet"))
+        valid_df = pd.read_parquet(os.path.join(data_path, "valid_df.parquet"))
+        test_df = pd.read_parquet(os.path.join(data_path, "test_df.parquet"))
 
-        ## Log first five rows of features and targets
-        print(f"\n{'=' * 80}\nX\n{'=' * 80}\n{X.head()}")
-        print(f"\n{'=' * 80}\ny\n{'=' * 80}\n{y.head()}")
+        # Ensure index is set for all splits
+        for name, df in [
+            ("train_df", train_df),
+            ("valid_df", valid_df),
+            ("test_df", test_df),
+        ]:
+            try:
+                df.set_index(var_index, inplace=True)
+            except KeyError:
+                print(f"Index '{var_index}' already set or doesn't exist in {name}")
 
-        ## Retain numeric columns only
-        cols_to_keep = X.select_dtypes(include=np.number).columns.tolist()
-        cols_to_keep.extend(X.select_dtypes(include="object").columns.tolist())
+        # Drop event_date - not needed for training
+        for df in [train_df, valid_df, test_df]:
+            if "event_date" in df.columns:
+                df.drop(columns=["event_date"], inplace=True)
 
-        X = X[cols_to_keep]
+        print(f"\nTrain shape: {train_df.shape}")
+        print(f"Valid shape: {valid_df.shape}")
+        print(f"Test shape: {test_df.shape}")
 
-        print(y)
-
-        X_columns_list = X.columns.to_list()
-
-    ############################################################################
-    ################ Step 6: Inference Stage Load X_columns list ###############
-    ############################################################################
-
-    if stage == "inference":
+        # Print percentage breakdown
+        total_events = len(train_df) + len(valid_df) + len(test_df)
+        print("\n" + "-" * 80)
+        print("SPLIT DISTRIBUTION")
+        print("-" * 80)
+        train_pct = len(train_df) / total_events * 100
+        valid_pct = len(valid_df) / total_events * 100
+        test_pct = len(test_df) / total_events * 100
+        print(f"Train: {len(train_df):,} events ({train_pct:.1f}%)")
+        print(f"Valid: {len(valid_df):,} events ({valid_pct:.1f}%)")
+        print(f"Test:  {len(test_df):,} events ({test_pct:.1f}%)\n")
+        print(f"Total: {total_events:,} events")
+        print("-" * 80)
 
         ########################################################################
-        # Load Previously Saved Features List From `feat_gen.py`
+        # Step 5: Process TRAINING split #######################################
         ########################################################################
-        # During training, we identified and stored `X_columns_list`.
-        # Now, we reload this to ensure that inference follows the same
-        # preprocessing pipeline as training, maintaining consistency.
-        ########################################################################
+        print("\n" + "=" * 80)
+        print("Processing TRAIN split...")
+        print("=" * 80)
 
-        # Load feature column names from Mlflow
-        X_columns_list = mlflow_loadArtifact(
-            experiment_name=exp_artifact_name,
-            run_name=preproc_run_name,  # Use the same run_name as training
-            obj_name="X_columns_list",
-        )
+        X_train = train_df.drop(columns=[target_outcome]).copy()
+        y_train_regular = train_df[target_outcome].copy()
+        y_train_log = np.log1p(train_df[target_outcome]).copy()
 
-        X = df[X_columns_list].copy()
+        # Retain numeric + object columns
+        cols_to_keep = X_train.select_dtypes(include=np.number).columns.tolist()
+        cols_to_keep.extend(X_train.select_dtypes(include="object").columns.tolist())
 
-        # Dropping "_missing" cols strings will be created next
-        X_columns_list = [col for col in X_columns_list if "_missing" not in col]
+        X_train = X_train[cols_to_keep]
+        X_columns_list = X_train.columns.to_list()
 
-    ############################################################################
-    ################ Step 7: Store Final List of Features for Production #######
-    ############################################################################
-    if stage == "training":
-        # Save feature column names to a pickle file
+        print(f"\nX_train shape: {X_train.shape}")
+        print(f"Number of features: {len(X_columns_list)}")
+        print(f"\nFirst 5 rows of X_train:")
+        print(X_train.head())
+        print(f"\nFirst 5 rows of y_train (regular):")
+        print(y_train_regular.head())
+        print(f"\nFirst 5 rows of y_train (log):")
+        print(y_train_log.head())
+
+        # Save X_columns_list to MLflow for inference
         mlflow_dumpArtifact(
             experiment_name=exp_artifact_name,
-            run_name=preproc_run_name,  # Consistent run_name for all artifacts
+            run_name=preproc_run_name,
             obj_name="X_columns_list",
             obj=X_columns_list,
         )
-        print(f"\nShape of X: {X.shape} \n")
 
-    if stage == "inference":
+        ########################################################################
+        # Step 6: Process VALIDATION split (using same columns as train)
+        ########################################################################
+        print("\n" + "=" * 80)
+        print("Processing VALID split...")
+        print("=" * 80)
+
+        X_valid = valid_df.drop(columns=[target_outcome]).copy()
+        y_valid_regular = valid_df[target_outcome].copy()
+        y_valid_log = np.log1p(valid_df[target_outcome]).copy()
+        X_valid = X_valid[X_columns_list]  # Use same columns as train
+
+        print(f"X_valid shape: {X_valid.shape}")
+
+        ########################################################################
+        # Step 7: Process TEST split (using same columns as train)
+        ########################################################################
+        print("\n" + "=" * 80)
+        print("Processing TEST split...")
+        print("=" * 80)
+
+        X_test = test_df.drop(columns=[target_outcome]).copy()
+        y_test_regular = test_df[target_outcome].copy()
+        y_test_log = np.log1p(test_df[target_outcome]).copy()
+        X_test = X_test[X_columns_list]  # Use same columns as train
+
+        print(f"X_test shape: {X_test.shape}")
+
+        ########################################################################
+        # Step 8: Save all X and y files
+        ########################################################################
+        print("\n" + "=" * 80)
+        print("Saving feature and target files...")
+        print("=" * 80)
+
+        # Save X files
+        X_train.to_parquet(os.path.join(data_path, "X_train.parquet"))
+        X_valid.to_parquet(os.path.join(data_path, "X_valid.parquet"))
+        X_test.to_parquet(os.path.join(data_path, "X_test.parquet"))
+        print("Saved X files (train, valid, test)")
+
+        # Save y files - REGULAR versions
+        pd.DataFrame(y_train_regular).to_parquet(
+            os.path.join(data_path, f"y_train_{target_outcome}.parquet")
+        )
+        pd.DataFrame(y_valid_regular).to_parquet(
+            os.path.join(data_path, f"y_valid_{target_outcome}.parquet")
+        )
+        pd.DataFrame(y_test_regular).to_parquet(
+            os.path.join(data_path, f"y_test_{target_outcome}.parquet")
+        )
+        print(f"Saved y files for '{target_outcome}' (train, valid, test)")
+
+        # Save y files - LOG versions
+        y_train_log_df = pd.DataFrame(y_train_log)
+        y_train_log_df.columns = [target_log_outcome]
+        y_train_log_df.to_parquet(
+            os.path.join(data_path, f"y_train_{target_log_outcome}.parquet")
+        )
+
+        y_valid_log_df = pd.DataFrame(y_valid_log)
+        y_valid_log_df.columns = [target_log_outcome]
+        y_valid_log_df.to_parquet(
+            os.path.join(data_path, f"y_valid_{target_log_outcome}.parquet")
+        )
+
+        y_test_log_df = pd.DataFrame(y_test_log)
+        y_test_log_df.columns = [target_log_outcome]
+        y_test_log_df.to_parquet(
+            os.path.join(data_path, f"y_test_{target_log_outcome}.parquet")
+        )
+        print(f"Saved y files for '{target_log_outcome}' (train, valid, test)")
+
+        print("\n" + "=" * 80)
+        print("Feature generation complete for all splits!")
+        print("=" * 80)
+        print("\nGenerated files:")
+        print("  X_train.parquet, X_valid.parquet, X_test.parquet")
         print(
-            "\033[33mNumber of rows may vary due to Step 17 of `preprocessing.py`\033[0m"
+            f"  y_train_{target_outcome}.parquet, y_valid_{target_outcome}.parquet, y_test_{target_outcome}.parquet"
         )
-    print("-" * 80)
-    print(f"\nFeature Space\n{X.head()}\n")
+        print(
+            f"  y_train_{target_log_outcome}.parquet, y_valid_{target_log_outcome}.parquet, y_test_{target_log_outcome}.parquet"
+        )
+        print("\n")
 
     ############################################################################
-    ################ Step 9: Generate Target Variable for Training #############
+    ################ Step 9: Inference Stage ###################################
     ############################################################################
 
-    if stage == "training":
-        # Target variables from constants.py
-        y = pd.DataFrame(y)
-        y.to_parquet(
-            os.path.join(data_path, f"y_{target_outcome}.parquet"),
+    elif stage == "inference":
+
+        print("\n" + "=" * 80)
+        print("Inference mode: Loading X_columns_list from MLflow...")
+        print("=" * 80)
+
+        # Load X_columns_list from MLflow
+        X_columns_list = mlflow_loadArtifact(
+            experiment_name=exp_artifact_name,
+            run_name=preproc_run_name,
+            obj_name="X_columns_list",
         )
 
-    ############################################################################
-    ################ Step 10: Save Processed Feature Space #####################
-    ############################################################################
+        print(f"Loaded {len(X_columns_list)} feature columns")
 
-    # Save the feature space (X) and target variables (y) to parquet files
-    X.to_parquet(os.path.join(data_path, "X.parquet"))
+        # Load inference data from input_data_file
+        df = pd.read_parquet(input_data_file)
+
+        # Filter to X_columns_list only
+        X = df[X_columns_list].copy()
+        X.to_parquet(os.path.join(data_path, "X.parquet"))
+
+        print(f"X shape for inference: {X.shape}")
+        print("\nInference features generated!")
 
 
 ################################################################################

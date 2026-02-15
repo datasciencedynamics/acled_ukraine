@@ -1,4 +1,3 @@
-
 ################################################################################
 ######################### Import Requisite Libraries ###########################
 ################################################################################
@@ -463,6 +462,7 @@ def highlight_null(val):
     color = "background-color: red" if pd.isnull(val) else ""
     return color
 
+
 ################################################################################
 ####################### MLFlow Models and Artifacts ############################
 ################################################################################
@@ -767,6 +767,7 @@ def return_model_metrics(inputs: dict, model, estimator_name) -> pd.Series:
 
 
 ####################### Enter the model plots into MlFlow ######################
+
 
 def mlflow_log_parameters_model(
     model_type: str = None,
@@ -1075,9 +1076,11 @@ def return_best_model(outcome, metric, mlruns_location=None, databricks=False):
 
     return best_model
 
+
 ################################################################################
 ############################### Actor Embeddings ###############################
 ################################################################################
+
 
 def normalize_actor(actor: str) -> str:
     """
@@ -1149,14 +1152,17 @@ def normalize_actor(actor: str) -> str:
     # fallback
     return actor
 
+
 ################################################################################
 # Actor Interactions Embeddings
 ################################################################################
+
 
 def parse_assoc_actors(x):
     if not isinstance(x, str) or x.strip() == "":
         return []
     return [a.strip() for a in x.split(";")]
+
 
 def build_actor_interaction_graph(
     df,
@@ -1178,9 +1184,7 @@ def build_actor_interaction_graph(
     G = nx.Graph()
 
     for _, row in tqdm(
-        df.iterrows(),
-        total=len(df),
-        desc="Building actor interaction graph"
+        df.iterrows(), total=len(df), desc="Building actor interaction graph"
     ):
         a1 = row[actor1_col]
         a2 = row[actor2_col]
@@ -1200,19 +1204,23 @@ def build_actor_interaction_graph(
         for assoc in parse_assoc_actors(row.get(assoc1_col)):
             assoc_root = normalize_actor(assoc)
             if assoc_root != a1:
-                G.add_edge(a1, assoc_root,
-                           weight=G.get_edge_data(a1, assoc_root, 
-                                                  {}).get("weight", 0) 
-                                                  + assoc_weight)
+                G.add_edge(
+                    a1,
+                    assoc_root,
+                    weight=G.get_edge_data(a1, assoc_root, {}).get("weight", 0)
+                    + assoc_weight,
+                )
 
         # assoc actors for actor2
         for assoc in parse_assoc_actors(row.get(assoc2_col)):
             assoc_root = normalize_actor(assoc)
             if assoc_root != a2:
-                G.add_edge(a2, assoc_root,
-                           weight=G.get_edge_data(a2, assoc_root, 
-                                                  {}).get("weight", 0) 
-                                                  + assoc_weight)
+                G.add_edge(
+                    a2,
+                    assoc_root,
+                    weight=G.get_edge_data(a2, assoc_root, {}).get("weight", 0)
+                    + assoc_weight,
+                )
 
     return G
 
@@ -1220,6 +1228,7 @@ def build_actor_interaction_graph(
 ################################################################################
 ## Actor Embedding Feature Engineering
 ################################################################################
+
 
 def add_pairwise_embedding_features(
     df: pd.DataFrame,
@@ -1237,13 +1246,11 @@ def add_pairwise_embedding_features(
     """
 
     emb_cols = sorted(
-        c for c in df.columns
+        c
+        for c in df.columns
         if c.startswith(emb_prefix) and not c.startswith(a2_prefix)
     )
-    a2_cols = sorted(
-        c for c in df.columns
-        if c.startswith(a2_prefix)
-    )
+    a2_cols = sorted(c for c in df.columns if c.startswith(a2_prefix))
 
     if len(emb_cols) == 0 or len(a2_cols) == 0:
         raise ValueError("Embedding columns not found in DataFrame.")
@@ -1264,12 +1271,10 @@ def add_pairwise_embedding_features(
 
     # Optional dot product
     if add_dot:
-        df["emb_dot"] = np.sum(
-            df[emb_cols].values * df[a2_cols].values,
-            axis=1
-        )
+        df["emb_dot"] = np.sum(df[emb_cols].values * df[a2_cols].values, axis=1)
 
     return df
+
 
 ################################################################################
 #################### Actual vs. Predicted Regression Plots #####################
@@ -1320,7 +1325,6 @@ def plot_actual_vs_predicted(
     return fig
 
 
-
 ################################################################################
 ############# Cumulative Fatalities Captured (impact curve) Plots ##############
 ################################################################################
@@ -1340,10 +1344,12 @@ def plot_cumulative_fatalities_captured(
     Optionally returns the underlying cumulative table.
     """
 
-    df = pd.DataFrame({
-        "fatal_true": np.expm1(y_true_log),
-        "fatal_pred": np.expm1(y_pred_log),
-    })
+    df = pd.DataFrame(
+        {
+            "fatal_true": np.expm1(y_true_log),
+            "fatal_pred": np.expm1(y_pred_log),
+        }
+    )
 
     df = df.sort_values("fatal_pred", ascending=False)
 
@@ -1374,14 +1380,17 @@ def plot_cumulative_fatalities_captured(
     fig.tight_layout()
 
     if return_table:
-        table = pd.DataFrame({
-            "event_fraction": event_frac,
-            "cumulative_fatalities": cum_fatalities.values,
-            "cumulative_fraction": cum_frac.values,
-        })
+        table = pd.DataFrame(
+            {
+                "event_fraction": event_frac,
+                "cumulative_fatalities": cum_fatalities.values,
+                "cumulative_fraction": cum_frac.values,
+            }
+        )
         return fig, table
 
     return fig
+
 
 def print_capture_summary(
     capture_table: pd.DataFrame,
@@ -1399,11 +1408,47 @@ def print_capture_summary(
         frac_events = capture_table.iloc[idx]["event_fraction"]
         frac_fatal = capture_table.iloc[idx]["cumulative_fraction"]
 
-        print(
-            f"Top {int(k*100):>2}% events "
-            f"→ {frac_fatal*100:6.2f}% of fatalities"
-        )
+        print(f"Top {int(k*100):>2}% events " f"→ {frac_fatal*100:6.2f}% of fatalities")
 
     print("\nFirst 5 rows of capture table:")
     print(capture_table.head().round(4))
     print("=" * 70 + "\n")
+
+
+################################################################################
+############################# Temporal Splits ##################################
+################################################################################
+
+
+def create_temporal_splits(df, train_end, valid_end):
+    """Create temporal train/valid/test splits"""
+
+    # Ensure datetime
+    df["event_date"] = pd.to_datetime(df["event_date"])
+
+    # Sort by date
+    df = df.sort_values("event_date").reset_index(drop=True)
+
+    # Create splits
+    train_mask = df["event_date"] <= pd.to_datetime(train_end)
+    valid_mask = (df["event_date"] > pd.to_datetime(train_end)) & (
+        df["event_date"] <= pd.to_datetime(valid_end)
+    )
+    test_mask = df["event_date"] > pd.to_datetime(valid_end)
+
+    # Log split info
+    print(f"\n{'='*60}")
+    print("TEMPORAL SPLIT SUMMARY")
+    print(f"{'='*60}")
+    print(f"Train: up to {train_end}")
+    print(f"  Events: {train_mask.sum():,} ({train_mask.sum()/len(df)*100:.1f}%)")
+    print(f"  Avg fatalities/event: {df[train_mask]['fatalities'].mean():.2f}")
+    print(f"\nValid: {train_end} to {valid_end}")
+    print(f"  Events: {valid_mask.sum():,} ({valid_mask.sum()/len(df)*100:.1f}%)")
+    print(f"  Avg fatalities/event: {df[valid_mask]['fatalities'].mean():.2f}")
+    print(f"\nTest: after {valid_end}")
+    print(f"  Events: {test_mask.sum():,} ({test_mask.sum()/len(df)*100:.1f}%)")
+    print(f"  Avg fatalities/event: {df[test_mask]['fatalities'].mean():.2f}")
+    print(f"{'='*60}\n")
+
+    return df[train_mask], df[valid_mask], df[test_mask]
