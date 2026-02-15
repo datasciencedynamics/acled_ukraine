@@ -9,7 +9,7 @@ from model_tuner import Model
 # Step 1. Import Configurations and Constants
 ################################################################################
 
-from core.constants import target_outcome
+from core.constants import target_outcome, target_log_outcome
 
 from core.config import (
     PROCESSED_DATA_DIR,
@@ -36,14 +36,12 @@ app = typer.Typer()
 @app.command()
 def main(
     # ---- REPLACE DEFAULT PATHS AS APPROPRIATE ---
-    model_type: str = "lr",
+    model_type: str = "xgb",
     pipeline_type: str = "orig",
-    outcome: str = target_outcome,
-    features_path: Path = PROCESSED_DATA_DIR / "X.parquet",
-    labels_path: Path = PROCESSED_DATA_DIR / f"y_{target_outcome}.parquet",
+    outcome: str = target_log_outcome,
+    data_path: Path = PROCESSED_DATA_DIR,
     scoring: str = "r2",
     pretrained: int = 0,
-
     # --------------------------------------------------------------------------
 ):
 
@@ -51,8 +49,54 @@ def main(
     # Step 3. Load Feature and Label Datasets
     ################################################################################
 
-    X = pd.read_parquet(features_path)
-    y = pd.read_parquet(labels_path)[outcome]  # series
+    print("\n" + "=" * 80)
+    print("Loading temporal splits for training...")
+    print("=" * 80)
+
+    # Load X splits
+    X_train = pd.read_parquet(data_path / "X_train.parquet")
+    X_valid = pd.read_parquet(data_path / "X_valid.parquet")
+    X_test = pd.read_parquet(data_path / "X_test.parquet")
+
+    # Load y splits based on outcome
+    y_train = pd.read_parquet(data_path / f"y_train_{outcome}.parquet").iloc[:, 0]
+    y_valid = pd.read_parquet(data_path / f"y_valid_{outcome}.parquet").iloc[:, 0]
+    y_test = pd.read_parquet(data_path / f"y_test_{outcome}.parquet").iloc[:, 0]
+
+    print(f"\nOutcome: {outcome}")
+    print(f"X_train shape: {X_train.shape}")
+    print(f"X_valid shape: {X_valid.shape}")
+    print(f"X_test shape: {X_test.shape}")
+    print(f"y_train shape: {y_train.shape}")
+    print(f"y_valid shape: {y_valid.shape}")
+    print(f"y_test shape: {y_test.shape}")
+
+    # Combine for full dataset (needed for model_tuner)
+    X = pd.concat([X_train, X_valid, X_test], axis=0)
+    y = pd.concat([y_train, y_valid, y_test], axis=0)
+
+    print(f"\nCombined X shape: {X.shape}")
+    print(f"Combined y shape: {y.shape}")
+
+    # Create custom splits dictionary
+    custom_splits = {
+        "X_train": X_train,
+        "y_train": y_train,
+        "X_valid": X_valid,
+        "y_valid": y_valid,
+        "X_test": X_test,
+        "y_test": y_test,
+    }
+
+    print(f"\n{'-'*80}\nCustom Data Splits Summary:\n{'-'*80}")
+    print(f"X_train = {X_train.shape[0]} rows")
+    print(f"X_valid = {X_valid.shape[0]} rows")
+    print(f"X_test = {X_test.shape[0]} rows\n{'-'*80}")
+    print(f"Total = {X.shape[0]} rows\n{'-'*80}")
+    print(f"X_train is {X_train.shape[0]/X.shape[0]*100:.2f}% of total data")
+    print(f"X_valid is {X_valid.shape[0]/X.shape[0]*100:.2f}% of total data")
+    print(f"X_test is {X_test.shape[0]/X.shape[0]*100:.2f}% of total data")
+    print("=" * 80 + "\n")
 
     ################################################################################
     # Step 4. Retrieve Model and Pipeline Configurations
@@ -87,7 +131,6 @@ def main(
     num_cols = [c for c in numerical_cols if c in X.columns]
     cat_cols = [c for c in categorical_cols if c in X.columns]
 
-
     pipeline_steps = adjust_preprocessing_pipeline(
         model_type,
         pipeline_steps,
@@ -110,12 +153,10 @@ def main(
     ################################################################################
 
     print()
-    print(f"Outcome:")
-    print("-" * 60)
+    print("=" * 60)
+    print(f"Outcome: {outcome}")
+    print("=" * 60)
     print()
-    print("=" * 60)
-    print(f"{outcome}")
-    print("=" * 60)
 
     ################################################################################
     # Step 7. Define and Initialize the Model Pipeline
@@ -138,7 +179,6 @@ def main(
             name=estimator_name,
             model_type="regression",
             estimator_name=estimator_name,
-            calibrate=True,
             estimator=clc,
             kfold=False,
             grid=tuned_parameters,
@@ -147,7 +187,6 @@ def main(
             n_iter=n_iter,
             scoring=[scoring],
             random_state=rstate,
-            # stratify_y=True,
             stratify_cols=["admin1"],
             boost_early=early_stop,
             imbalance_sampler=sampler,
@@ -158,7 +197,7 @@ def main(
         # Step 8. Perform Hyperparameter Tuning
         ################################################################################
 
-        model.grid_search_param_tuning(X, y)
+        model.grid_search_param_tuning(X, y, custom_splits=custom_splits)
 
         ################################################################################
         # Step 9. Extract Training, Validation, and Test Splits
