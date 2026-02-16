@@ -107,15 +107,23 @@ def main(
     })
 
     ############################################################################
-    # Step 5. Remove Duplicates
+    # Step 5. Remove Duplicates (Safety Check)
     ############################################################################
 
     n_before = len(out)
-    out = out.drop_duplicates(subset=["event_id_cnty"], keep="last")
-    n_after = len(out)
+    duplicates = out[out.duplicated(subset=["event_id_cnty"], keep=False)]
     
-    if n_before > n_after:
-        print(f"  - Removed {n_before - n_after:,} duplicate event_id_cnty")
+    if len(duplicates) > 0:
+        print()
+        print(f"WARNING: Found {len(duplicates):,} duplicate event_id_cnty entries!")
+        print(f"This should not happen - Step 2 verified index uniqueness.")
+        print(f"Removing duplicates (keeping last occurrence)...")
+        out = out.drop_duplicates(subset=["event_id_cnty"], keep="last")
+        n_after = len(out)
+        print(f"  - Removed {n_before - n_after:,} duplicate rows")
+    else:
+        print()
+        print("No duplicates found (as expected from Step 2 verification)")
 
     ############################################################################
     # Step 6. Save Processed Data
