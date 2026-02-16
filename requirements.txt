@@ -11,5 +11,6 @@ node2vec==0.4.6
 python-dotenv==1.0.1
 pytest==8.3.4
 pytest-cov==6.0.0
+sentence_transformers==5.2.2
 shap==0.46.0
 typer==0.15.1
