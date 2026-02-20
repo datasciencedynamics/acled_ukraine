@@ -101,7 +101,6 @@ def main(
     ################################################################################
     # Step 4. Retrieve Model and Pipeline Configurations
     ################################################################################
-
     clc = model_definitions[model_type]["clc"]
     estimator_name = model_definitions[model_type]["estimator_name"]
     pipeline_steps = pipelines[pipeline_type]["pipeline"]
@@ -187,7 +186,6 @@ def main(
             n_iter=n_iter,
             scoring=[scoring],
             random_state=rstate,
-            stratify_cols=["admin1"],
             boost_early=early_stop,
             imbalance_sampler=sampler,
             feature_selection=feature_selection,
@@ -199,16 +197,8 @@ def main(
 
         model.grid_search_param_tuning(X, y, custom_splits=custom_splits)
 
-        ################################################################################
-        # Step 9. Extract Training, Validation, and Test Splits
-        ################################################################################
-
-    X_train, y_train = model.get_train_data(X, y)
-    X_valid, y_valid = model.get_valid_data(X, y)
-    X_test, y_test = model.get_test_data(X, y)
-
     ################################################################################
-    # Step 10. Train the Model
+    # Step 9. Train the Model
     ################################################################################
 
     # Boosting algorithms like XGBoost and CatBoost benefit from validation data
@@ -233,7 +223,7 @@ def main(
             )
 
     ################################################################################
-    # Step 12. Report Metrics (Train / Validation / Test)
+    # Step 10. Report Metrics (Train / Validation / Test)
     # see the results printed to the terminal for reference
     ################################################################################
 

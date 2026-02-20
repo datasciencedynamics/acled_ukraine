@@ -3,6 +3,7 @@ import typer
 from loguru import logger
 import pandas as pd
 import numpy as np
+from sklearn.metrics import r2_score
 
 # ------------------------------------------------------------------
 # Imports from your codebase (unchanged)
@@ -11,6 +12,7 @@ from core.functions import (
     plot_actual_vs_predicted,
     plot_cumulative_fatalities_captured,
     print_capture_summary,
+    create_shap_plots,
     mlflow_load_model,
     log_mlflow_metrics,
     mlflow_log_parameters_model,
@@ -37,7 +39,7 @@ app = typer.Typer()
 
 @app.command()
 def main(
-    model_type: str = "lr",
+    model_type: str = "xgb",
     pipeline_type: str = "orig",
     outcome: str = target_log_outcome,
     outcome_name: str = None,  # Optional: defaults to outcome
@@ -149,7 +151,24 @@ def main(
     print("Metrics logged")
 
     # --------------------------------------------------------------
-    # STEP 6: Plots and capture tables by split
+    # STEP 6: Calculate and Display Log-Scale R-Squared Summary
+    # --------------------------------------------------------------
+    print("\n" + "=" * 80)
+    print("MODEL PERFORMANCE (Log Scale - Training Objective)")
+    print("=" * 80)
+
+    log_r2_results = {}
+
+    for split, (X_s, y_s) in splits.items():
+        y_pred_s = model.predict(X_s)
+        r2_log = r2_score(y_s, y_pred_s)
+        log_r2_results[split] = r2_log
+        print(f"{split.capitalize()} R-Squared (log): {r2_log:.4f}")
+
+    print("=" * 80)
+
+    # --------------------------------------------------------------
+    # STEP 7: Plots and capture tables by split
     # --------------------------------------------------------------
     print("\n" + "=" * 80)
     print("Generating evaluation plots...")
@@ -160,18 +179,21 @@ def main(
 
     for split, (X_s, y_s) in splits.items():
 
+        # Generate predictions
         y_pred_s = pd.Series(
             model.predict(X_s),
             index=y_s.index,
         )
 
-        # ---- Actual vs Predicted (log scale)
+        # ---- Actual vs Predicted (show log-scale metrics)
         fig_avp = plot_actual_vs_predicted(
             y_true=y_s,
             y_pred=y_pred_s,
             title=f"Actual vs Predicted Fatalities ({split})",
+            log_scale=False,
+            show_log_metrics=True,  # Show log-scale R-Squared (consistent)
         )
-        all_figs[f"actual_vs_predicted_{split}.png"] = fig_avp
+        all_figs[f"actual_vs_predicted_{split}"] = fig_avp
 
         # ---- Cumulative fatalities captured
         fig_cap, capture_df = plot_cumulative_fatalities_captured(
@@ -181,27 +203,48 @@ def main(
             return_table=True,
         )
 
-        all_figs[f"cumulative_fatalities_captured_{split}.png"] = fig_cap
+        all_figs[f"cumulative_fatalities_captured_{split}"] = fig_cap
         capture_tables[split] = capture_df
 
         # ---- Terminal summary
         print_capture_summary(capture_df, split.upper())
 
     # --------------------------------------------------------------
-    # STEP 7: Log plots (figures only)
+    # STEP 8: Log PNG plots
     # --------------------------------------------------------------
     print("\n" + "=" * 80)
-    print("Logging plots to MLflow...")
+    print("Logging PNG plots to MLflow...")
     print("=" * 80)
+
+    png_figs = {f"{name}.png": fig for name, fig in all_figs.items()}
+
     log_mlflow_metrics(
         experiment_name=experiment_name,
         run_name=run_name,
-        images=all_figs,
+        images=png_figs,
     )
-    print("Plots logged")
+    print(f"Logged {len(png_figs)} PNG plots")
 
     # --------------------------------------------------------------
-    # STEP 8: Log capture tables as CSV artifacts
+    # STEP 8b: Log SVG plots
+    # --------------------------------------------------------------
+    print("\n" + "=" * 80)
+    print("Logging SVG plots to MLflow...")
+    print("=" * 80)
+
+    for name, fig in all_figs.items():
+        mlflow_dumpArtifact(
+            experiment_name=experiment_name,
+            run_name=run_name,
+            obj_name=name,
+            obj=fig,
+            artifacts_data_path=mlflow_models_data,
+            artifact_format="svg",
+        )
+    print(f"Logged {len(all_figs)} SVG plots")
+
+    # --------------------------------------------------------------
+    # STEP 9: Log capture tables as CSV artifacts
     # --------------------------------------------------------------
     print("\n" + "=" * 80)
     print("Logging capture tables to MLflow...")
@@ -218,7 +261,7 @@ def main(
     print("Capture tables logged")
 
     # --------------------------------------------------------------
-    # STEP 9: Log model parameters
+    # STEP 10: Log model parameters
     # --------------------------------------------------------------
     print("\n" + "=" * 80)
     print("Logging model parameters to MLflow...")
@@ -230,6 +273,63 @@ def main(
         model=model,
     )
     print("Model parameters logged")
+
+    # --------------------------------------------------------------
+    # STEP 11: SHAP Analysis
+    # --------------------------------------------------------------
+    print("\n" + "=" * 80)
+    print("Running SHAP analysis...")
+    print("=" * 80)
+
+    # Create output directory for SHAP plots
+    shap_output_dir = Path("./models/eval") / outcome / estimator_name
+    shap_output_dir.mkdir(parents=True, exist_ok=True)
+
+    shap_values, shap_importance, shap_figs = create_shap_plots(
+        model=model,
+        X_train=X_train,
+        X_test=X_test,
+        y_test=y_test,
+        output_dir=shap_output_dir,
+        max_display=20,
+        sample_size=100,
+    )
+
+    # Log SHAP PNG plots
+    print("\nLogging SHAP PNG plots to MLflow...")
+    shap_png_dict = {f"{name}.png": fig for name, fig in shap_figs.items()}
+
+    log_mlflow_metrics(
+        experiment_name=experiment_name,
+        run_name=run_name,
+        images=shap_png_dict,
+    )
+    print(f"Logged {len(shap_png_dict)} SHAP PNG plots")
+
+    # Log SHAP SVG plots
+    print("Logging SHAP SVG plots to MLflow...")
+    for name, fig in shap_figs.items():
+        mlflow_dumpArtifact(
+            experiment_name=experiment_name,
+            run_name=run_name,
+            obj_name=name,
+            obj=fig,
+            artifacts_data_path=mlflow_models_data,
+            artifact_format="svg",
+        )
+    print(f"Logged {len(shap_figs)} SHAP SVG plots")
+
+    # Log SHAP importance CSV
+    mlflow_dumpArtifact(
+        experiment_name=experiment_name,
+        run_name=run_name,
+        obj_name="shap_feature_importance",
+        obj=shap_importance,
+        artifacts_data_path=mlflow_models_data,
+        artifact_format="csv",
+    )
+
+    print("SHAP analysis complete - plots and data logged to MLflow")
 
     logger.success("Model evaluation complete.")
 
