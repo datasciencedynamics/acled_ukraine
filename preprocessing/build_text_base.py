@@ -69,8 +69,8 @@ def main(
     print("Starting text base preprocessing pipeline...")
     print(f"Reading data from: {input_path}")
 
-    # Read only the notes column - event_id_cnty is the index
-    df = pd.read_parquet(input_path, columns=["notes"])
+    # Read notes and tags columns - event_id_cnty is the index
+    df = pd.read_parquet(input_path, columns=["notes", "tags"])
     print(f"Loaded {len(df):,} rows")
 
     ############################################################################
@@ -82,19 +82,40 @@ def main(
     print("Primary key uniqueness verified")
 
     ############################################################################
-    # Step 3. Clean Text Data
+    # Step 3. Concatenate Tags to Notes
+    ############################################################################
+
+    print()
+    print("Concatenating tags to notes...")
+    
+    # Fill NaN tags with empty string
+    df["tags"] = df["tags"].fillna("").astype(str)
+    
+    # Concatenate notes with tags (separated by delimiter)
+    df["notes_with_tags"] = (
+        df["notes"].fillna("").astype(str) 
+        + " | TAGS: " 
+        + df["tags"]
+    )
+    
+    # Count how many rows had non-empty tags
+    n_with_tags = (df["tags"] != "").sum()
+    print(f"  - {n_with_tags:,} rows had tags appended")
+
+    ############################################################################
+    # Step 4. Clean Text Data
     ############################################################################
 
     print()
     print("Cleaning text:")
     print("  - Removing leading date phrases...")
-    notes_clean = remove_leading_date_phrase(df["notes"])
+    notes_clean = remove_leading_date_phrase(df["notes_with_tags"])
 
     print("  - Applying text cleaning (lowercasing, removing URLs, emails, special chars)...")
     notes_clean_ml = strip_leading_comma(clean_notes_text_series(notes_clean))
 
     ############################################################################
-    # Step 4. Build Output DataFrame
+    # Step 5. Build Output DataFrame
     ############################################################################
 
     print()
@@ -107,18 +128,26 @@ def main(
     })
 
     ############################################################################
-    # Step 5. Remove Duplicates
+    # Step 6. Remove Duplicates (Safety Check)
     ############################################################################
 
     n_before = len(out)
-    out = out.drop_duplicates(subset=["event_id_cnty"], keep="last")
-    n_after = len(out)
+    duplicates = out[out.duplicated(subset=["event_id_cnty"], keep=False)]
     
-    if n_before > n_after:
-        print(f"  - Removed {n_before - n_after:,} duplicate event_id_cnty")
+    if len(duplicates) > 0:
+        print()
+        print(f"WARNING: Found {len(duplicates):,} duplicate event_id_cnty entries!")
+        print(f"This should not happen - Step 2 verified index uniqueness.")
+        print(f"Removing duplicates (keeping last occurrence)...")
+        out = out.drop_duplicates(subset=["event_id_cnty"], keep="last")
+        n_after = len(out)
+        print(f"  - Removed {n_before - n_after:,} duplicate rows")
+    else:
+        print()
+        print("No duplicates found (as expected from Step 2 verification)")
 
     ############################################################################
-    # Step 6. Save Processed Data
+    # Step 7. Save Processed Data
     ############################################################################
 
     # Ensure output directory exists
@@ -130,7 +159,7 @@ def main(
     print(f"Saved: {output_path}")
     print(f"  Final shape: {len(out):,} rows x {out.shape[1]} column(s)")
     print()
-    print("Preprocessing complete!")
+    print("Building text base complete!")
 
 
 if __name__ == "__main__":

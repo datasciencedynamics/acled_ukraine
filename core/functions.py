@@ -11,16 +11,21 @@ from mlflow.tracking import MlflowClient
 import pickle
 import os
 import networkx as nx
+import shap
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
 from imblearn.over_sampling import SMOTE
 from sklearn.feature_selection import RFE
+from pathlib import Path
 
 from sklearn.metrics import (
     confusion_matrix,
     ConfusionMatrixDisplay,
+    mean_squared_error,
+    mean_absolute_error,
+    r2_score,
     precision_score,
     recall_score,
     brier_score_loss,
@@ -596,13 +601,13 @@ def mlflow_dumpArtifact(
     Args:
         experiment_name: Name of the MLflow experiment.
         run_name: Name of the run within the experiment.
-        obj_name: Name of the artifact (without .pkl extension).
+        obj_name: Name of the artifact (without extension).
         obj: Object to serialize and log.
         get_existing_id: If True, try to reuse an existing run ID (default: True).
         artifact_run_id: Specific run ID to use (optional).
         artifacts_data_path: Path to MLflow artifacts directory
         (default: mlflow_artifacts_data from constants).
-        artifact_format: Format to save the artifact ('pkl' or 'csv').
+        artifact_format: Format to save the artifact ('pkl', 'csv', or 'svg').
 
     Returns:
         None
@@ -622,7 +627,10 @@ def mlflow_dumpArtifact(
         mlflow.set_tracking_uri(f"file://{abs_mlflow_data}")
 
     # Set or create experiment
-    experiment_id = set_or_create_experiment(experiment_name, databricks=databricks)
+    experiment_id = set_or_create_experiment(
+        experiment_name,
+        databricks=databricks,
+    )
     print(f"Experiment_ID for artifact {obj_name}: {experiment_id}")
 
     if get_existing_id:
@@ -653,6 +661,18 @@ def mlflow_dumpArtifact(
             else:
                 raise TypeError(
                     "artifact_format='csv' requires a DataFrame or CSV string"
+                )
+
+        elif artifact_format == "svg":
+            # matplotlib Figure
+            temp_file = f"{obj_name}.svg"
+
+            if hasattr(obj, "savefig"):
+                # matplotlib Figure object
+                obj.savefig(temp_file, format="svg", bbox_inches="tight", dpi=300)
+            else:
+                raise TypeError(
+                    "artifact_format='svg' requires a matplotlib Figure object"
                 )
 
         else:
@@ -1285,41 +1305,122 @@ def plot_actual_vs_predicted(
     y_true: pd.Series,
     y_pred: pd.Series,
     title: str = "Actual vs Predicted Fatalities",
+    log_scale: bool = False,
+    show_log_metrics: bool = False,
 ):
     """
-    Scatter plot of observed vs predicted fatalities
-    on the original (count) scale.
+    Scatter plot of observed vs predicted fatalities.
 
-    Inputs are expected to be log(1 + fatalities).
+    Parameters:
+    -----------
+    y_true : pd.Series
+        True values in log(1 + fatalities) scale
+    y_pred : pd.Series
+        Predicted values in log(1 + fatalities) scale
+    title : str
+        Plot title
+    log_scale : bool
+        If True, use log scale for axes. Default False for clarity.
+    show_log_metrics : bool
+        If True, show R² on log scale (training objective).
+        If False, show R² on actual scale (interpretable). Default False.
+
+    Returns:
+    --------
+    fig : matplotlib.figure.Figure
     """
 
     # Inverse transform to original scale
-    y_true = np.expm1(y_true)
-    y_pred = np.expm1(y_pred)
+    y_true_actual = np.expm1(y_true)
+    y_pred_actual = np.expm1(y_pred)
 
-    fig, ax = plt.subplots(figsize=(6, 6))
+    # Handle any negative predictions (shouldn't happen but be safe)
+    y_pred_actual = np.maximum(y_pred_actual, 0)
 
+    # Calculate SEPARATE data ranges for X and Y
+    x_max = y_true_actual.max()
+    y_max = y_pred_actual.max()
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    # Scatter plot
     ax.scatter(
-        y_true,
-        y_pred,
-        alpha=0.3,
-        s=10,
+        y_true_actual,
+        y_pred_actual,
+        alpha=0.4,
+        s=20,
+        edgecolors="none",
     )
 
-    lims = [
-        min(y_true.min(), y_pred.min()),
-        max(y_true.max(), y_pred.max()),
-    ]
+    # Perfect prediction line - draw to the LARGER of the two maxes
+    line_max = max(x_max, y_max)
+    ax.plot(
+        [0, line_max],
+        [0, line_max],
+        "r--",
+        linewidth=2,
+        label="Perfect prediction",
+        alpha=0.7,
+    )
 
-    ax.plot(lims, lims, linewidth=1)
+    # Set axis limits based on INDIVIDUAL ranges (not square!)
+    if log_scale:
+        # For log scale, start from a small positive number
+        x_min = max(0.1, y_true_actual[y_true_actual > 0].min() * 0.5)
+        y_min = max(0.1, y_pred_actual[y_pred_actual > 0].min() * 0.5)
 
-    ax.set_xlabel("Observed fatalities")
-    ax.set_ylabel("Predicted fatalities")
-    ax.set_title(title)
+        # Set limits with 10% padding
+        ax.set_xlim(x_min, x_max * 1.1)
+        ax.set_ylim(y_min, y_max * 1.1)
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlabel("Observed Fatalities (log scale)", fontsize=12)
+        ax.set_ylabel("Predicted Fatalities (log scale)", fontsize=12)
+    else:
+        # Linear scale - INDEPENDENT limits for X and Y
+        x_limit = x_max * 1.05
+        y_limit = y_max * 1.05
 
-    # Optional: uncomment if you want log-scaled axes
-    # ax.set_xscale("log")
-    # ax.set_yscale("log")
+        ax.set_xlim(-x_limit * 0.02, x_limit)
+        ax.set_ylim(-y_limit * 0.02, y_limit)
+
+        ax.set_xlabel("Observed Fatalities", fontsize=12)
+        ax.set_ylabel("Predicted Fatalities", fontsize=12)
+
+    # Title, legend, grid
+    ax.set_title(title, fontsize=14, fontweight="bold")
+    ax.legend(loc="upper left", fontsize=10)
+    ax.grid(True, alpha=0.3, linestyle="--")
+
+    # Calculate metrics on appropriate scale
+    if show_log_metrics:
+        # Metrics on LOG scale (matches training objective)
+        r2 = r2_score(y_true, y_pred)
+        mae = mean_absolute_error(y_true, y_pred)
+        rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+        scale_label = "(log scale)"
+    else:
+        # Metrics on ACTUAL scale (interpretable for stakeholders)
+        r2 = r2_score(y_true_actual, y_pred_actual)
+        mae = mean_absolute_error(y_true_actual, y_pred_actual)
+        rmse = np.sqrt(mean_squared_error(y_true_actual, y_pred_actual))
+        scale_label = ""
+
+    # Add text box with metrics
+    metrics_text = (
+        f"R² = {r2:.3f} {scale_label}\n" f"MAE = {mae:.2f}\n" f"RMSE = {rmse:.2f}"
+    )
+
+    ax.text(
+        0.95,
+        0.05,
+        metrics_text,
+        transform=ax.transAxes,
+        fontsize=10,
+        verticalalignment="bottom",
+        horizontalalignment="right",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+    )
 
     fig.tight_layout()
     return fig
@@ -1362,29 +1463,107 @@ def plot_cumulative_fatalities_captured(
     # area under cumulative curve
     auc_capture = np.trapz(cum_frac.values, event_frac)
 
-    fig, ax = plt.subplots(figsize=(6, 4))
+    fig, ax = plt.subplots(figsize=(8, 6))
 
+    # Shaded gain area
+    ax.fill_between(
+        event_frac,
+        event_frac,  # Random baseline
+        cum_frac,  # Model curve
+        alpha=0.15,
+        color="blue",
+        label="Efficiency gain over random",
+    )
+
+    # Model curve
     ax.plot(
         event_frac,
         cum_frac,
         label=f"{model_name} (AUC = {auc_capture:.3f})",
-        linewidth=2,
+        linewidth=2.5,
+        color="#1f77b4",
     )
-    ax.plot(event_frac, event_frac, "--", color="gray", label="Random")
 
-    ax.set_xlabel("Fraction of Events")
-    ax.set_ylabel("Fraction of Total Fatalities Captured")
-    ax.set_title(title)
-    ax.legend()
+    # Random baseline
+    ax.plot(
+        event_frac,
+        event_frac,
+        "--",
+        color="gray",
+        label="Random",
+        linewidth=2,
+        alpha=0.7,
+    )
+
+    # Reference lines and annotations at key points
+    key_thresholds = [0.10, 0.20, 0.50]
+
+    for pct in key_thresholds:
+        # Vertical line
+        ax.axvline(x=pct, color="gray", linestyle=":", alpha=0.4, linewidth=1)
+
+        # Find capture rate at this threshold
+        idx = int(pct * len(df)) - 1
+        if idx >= 0 and idx < len(cum_frac):
+            capture_rate = cum_frac.iloc[idx]
+
+            # Horizontal line
+            ax.axhline(
+                y=capture_rate, color="gray", linestyle=":", alpha=0.4, linewidth=1
+            )
+
+            # Annotation with actual counts
+            actual_count = cum_fatalities.iloc[idx]
+            ax.annotate(
+                f"{int(pct*100)}% events\n→ {capture_rate*100:.0f}% casualties\n({int(actual_count):,} of {int(total_fatalities):,})",
+                xy=(pct, capture_rate),
+                xytext=(pct + 0.08, capture_rate - 0.12),
+                fontsize=9,
+                bbox=dict(
+                    boxstyle="round,pad=0.4",
+                    facecolor="wheat",
+                    alpha=0.7,
+                    edgecolor="gray",
+                ),
+                arrowprops=dict(
+                    arrowstyle="->",
+                    connectionstyle="arc3,rad=0.2",
+                    lw=1.5,
+                    color="gray",
+                ),
+            )
+
+    # Labels and formatting
+    ax.set_xlabel("Fraction of Events", fontsize=12, fontweight="bold")
+    ax.set_ylabel(
+        "Fraction of Total Fatalities Captured", fontsize=12, fontweight="bold"
+    )
+    ax.set_title(title, fontsize=14, fontweight="bold")
+    ax.legend(loc="lower right", fontsize=10, framealpha=0.9)
+    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+
+    # Secondary Y-axis with actual fatality counts
+    ax2 = ax.twinx()
+    ax2.set_ylabel(
+        f"Cumulative Fatalities (Total = {int(total_fatalities):,})",
+        fontsize=11,
+        color="darkred",
+    )
+    ax2.set_ylim(0, total_fatalities)
+    ax2.tick_params(axis="y", labelcolor="darkred")
 
     fig.tight_layout()
 
     if return_table:
+        # RETURN FULL TABLE (every event)
         table = pd.DataFrame(
             {
                 "event_fraction": event_frac,
                 "cumulative_fatalities": cum_fatalities.values,
                 "cumulative_fraction": cum_frac.values,
+                "lift_over_random": cum_frac.values / event_frac,  # Added lift column
             }
         )
         return fig, table
@@ -1395,7 +1574,7 @@ def plot_cumulative_fatalities_captured(
 def print_capture_summary(
     capture_table: pd.DataFrame,
     split_name: str,
-    ks=(0.01, 0.05, 0.10, 0.20, 0.30),
+    ks=(0.01, 0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.75, 0.90, 0.95, 0.99),
 ):
     print("\n" + "=" * 70)
     print(f"CUMULATIVE FATALITY CAPTURE SUMMARY ({split_name})")
@@ -1427,7 +1606,7 @@ def create_temporal_splits(df, train_end, valid_end):
     df["event_date"] = pd.to_datetime(df["event_date"])
 
     # Sort by date
-    df = df.sort_values("event_date").reset_index(drop=True)
+    df = df.sort_values("event_date").reset_index(drop=False)
 
     # Create splits
     train_mask = df["event_date"] <= pd.to_datetime(train_end)
@@ -1452,3 +1631,253 @@ def create_temporal_splits(df, train_end, valid_end):
     print(f"{'='*60}\n")
 
     return df[train_mask], df[valid_mask], df[test_mask]
+
+
+def normalize_split(df):
+    """
+    Create missing indicators for actor columns.
+
+    Args:
+        df: DataFrame with actor1 and actor2 columns
+
+    Returns:
+        DataFrame with actor1_missing and actor2_missing binary indicators
+    """
+    # Create binary missing indicators
+    if "actor1" in df.columns:
+        df["actor1_missing"] = df["actor1"].isna().astype(int)
+
+    if "actor2" in df.columns:
+        df["actor2_missing"] = df["actor2"].isna().astype(int)
+
+    return df
+
+
+def apply_embeddings(df, emb_df):
+    df = df.merge(emb_df, left_on="actor1_root", right_index=True, how="left")
+    df = df.merge(
+        emb_df.add_prefix("a2_"),
+        left_on="actor2_root",
+        right_index=True,
+        how="left",
+    )
+    return df
+
+
+################################################################################
+#### SHAP Value Plots for Model Explainability (for tree-based models) #########
+################################################################################
+
+
+def create_shap_plots(
+    model,
+    X_train: pd.DataFrame,
+    X_test: pd.DataFrame,
+    y_test: pd.Series,
+    output_dir: Path = Path("./models/eval"),
+    max_display: int = 20,
+    sample_size: int = 100,
+):
+    """
+    Create comprehensive SHAP plots for model interpretation.
+
+    Args:
+        model: Trained model object (model_tuner.Model wrapper)
+        X_train: Training features (for background samples)
+        X_test: Test features (for SHAP values)
+        y_test: Test target (for analysis)
+        output_dir: Directory to save plots
+        max_display: Number of features to show in summary plots
+        sample_size: Number of test samples to explain (SHAP is slow!)
+
+    Returns:
+        shap_values: SHAP values array
+        feature_importance_df: DataFrame with feature importance
+        figures: Dictionary of matplotlib figures
+    """
+
+    print("\n" + "=" * 80)
+    print("GENERATING SHAP EXPLANATIONS")
+    print("=" * 80)
+
+    # Create output directory
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Dictionary to store figures
+    figures = {}
+
+    # --------------------------------------------------------------
+    # STEP 1: Extract the actual XGBoost model from wrapper
+    # --------------------------------------------------------------
+    print("\n[1/6] Extracting XGBoost model from wrapper...")
+
+    # Get the fitted pipeline
+    fitted_pipeline = model.estimator
+
+    # Get the final XGBoost estimator (last step in pipeline)
+    xgb_model = fitted_pipeline.steps[-1][1]
+
+    print(f"Extracted model type: {type(xgb_model)}")
+
+    # --------------------------------------------------------------
+    # STEP 2: Transform training data through preprocessing pipeline
+    # --------------------------------------------------------------
+    print("\n[2/6] Transforming data through preprocessing pipeline...")
+
+    # Get all steps EXCEPT the final estimator
+    preprocessing_steps = fitted_pipeline.steps[:-1]
+
+    # Create a pipeline with just preprocessing
+    from sklearn.pipeline import Pipeline
+
+    if preprocessing_steps:
+        preprocessing_pipeline = Pipeline(preprocessing_steps)
+        X_train_transformed = preprocessing_pipeline.transform(X_train)
+        X_test_transformed = preprocessing_pipeline.transform(X_test)
+    else:
+        # No preprocessing steps
+        X_train_transformed = X_train.values
+        X_test_transformed = X_test.values
+
+    print(f"Training data shape after preprocessing: {X_train_transformed.shape}")
+    print(f"Test data shape after preprocessing: {X_test_transformed.shape}")
+
+    # --------------------------------------------------------------
+    # STEP 3: Create SHAP Explainer on transformed data
+    # --------------------------------------------------------------
+    print("\n[3/6] Creating SHAP TreeExplainer...")
+
+    # TreeExplainer works directly with XGBoost models
+    explainer = shap.TreeExplainer(xgb_model)
+    print("Using TreeExplainer (fast, exact for tree models)")
+
+    # --------------------------------------------------------------
+    # STEP 4: Calculate SHAP Values on Test Set
+    # --------------------------------------------------------------
+    print(f"\n[4/6] Calculating SHAP values for {sample_size} test samples...")
+
+    # Sample test data for speed
+    if X_test_transformed.shape[0] > sample_size:
+        sample_indices = np.random.choice(
+            X_test_transformed.shape[0], size=sample_size, replace=False
+        )
+        X_sample = X_test_transformed[sample_indices]
+        y_sample = y_test.iloc[sample_indices]
+    else:
+        X_sample = X_test_transformed
+        y_sample = y_test
+
+    # Calculate SHAP values
+    shap_values = explainer.shap_values(X_sample)
+
+    print(f"SHAP values shape: {shap_values.shape}")
+
+    # Get feature names after transformation
+    try:
+        # Try to get feature names from pipeline
+        feature_names = fitted_pipeline[:-1].get_feature_names_out()
+    except:
+        # Fallback: use numeric indices
+        feature_names = [f"feature_{i}" for i in range(X_sample.shape[1])]
+
+    print(f"Features: {len(feature_names)}")
+
+    # ============================================================
+    # NEW: Convert sparse matrix to dense DataFrame for SHAP plots
+    # ============================================================
+    import scipy.sparse as sp
+
+    if sp.issparse(X_sample):
+        X_sample = X_sample.toarray()
+        print("Converted sparse matrix to dense array")
+
+    # Convert to DataFrame with feature names for better SHAP visualization
+    X_sample = pd.DataFrame(X_sample, columns=feature_names)
+    print(f"Converted to DataFrame with feature names for SHAP visualization")
+    # ============================================================
+
+    # --------------------------------------------------------------
+    # STEP 5: Summary Plot (Bar) - Feature Importance
+    # --------------------------------------------------------------
+    print(f"\n[5/6] Creating feature importance plot...")
+
+    fig_importance = plt.figure(figsize=(10, 8))
+    shap.summary_plot(
+        shap_values,
+        X_sample,
+        feature_names=feature_names,
+        plot_type="bar",
+        max_display=max_display,
+        show=False,
+    )
+    plt.title("SHAP Feature Importance", fontsize=14, fontweight="bold")
+    plt.tight_layout()
+
+    # Save to file
+    plt.savefig(output_dir / "shap_importance.png", dpi=300, bbox_inches="tight")
+    plt.savefig(output_dir / "shap_importance.svg", bbox_inches="tight")
+
+    # Store figure (don't close yet!)
+    figures["shap_importance"] = fig_importance
+
+    print(f"Saved: {output_dir}/shap_importance.png")
+
+    # --------------------------------------------------------------
+    # STEP 6: Summary Plot (Beeswarm) - Feature Effects
+    # --------------------------------------------------------------
+    print(f"\n[6/6] Creating beeswarm plot...")
+
+    fig_beeswarm = plt.figure(figsize=(10, 8))
+    shap.summary_plot(
+        shap_values,
+        X_sample,
+        feature_names=feature_names,
+        max_display=max_display,
+        show=False,
+    )
+    plt.title("SHAP Summary Plot (Feature Effects)", fontsize=14, fontweight="bold")
+    plt.tight_layout()
+
+    # Save to file
+    plt.savefig(output_dir / "shap_beeswarm.png", dpi=300, bbox_inches="tight")
+    plt.savefig(output_dir / "shap_beeswarm.svg", bbox_inches="tight")
+
+    # Store figure (don't close yet!)
+    figures["shap_beeswarm"] = fig_beeswarm
+
+    print(f"Saved: {output_dir}/shap_beeswarm.png")
+
+    # --------------------------------------------------------------
+    # STEP 7: Feature Importance DataFrame
+    # --------------------------------------------------------------
+    print(f"\n[7/7] Creating feature importance table...")
+
+    feature_importance_df = pd.DataFrame(
+        {
+            "feature": feature_names,
+            "importance": np.abs(shap_values).mean(axis=0),
+            "mean_shap_value": shap_values.mean(axis=0),
+            "abs_mean_shap": np.abs(shap_values).mean(axis=0),
+        }
+    ).sort_values("importance", ascending=False)
+
+    # Save to CSV
+    feature_importance_df.to_csv(
+        output_dir / "shap_feature_importance.csv", index=False
+    )
+
+    print("\nTop 10 Most Important Features:")
+    print(feature_importance_df.head(10).to_string(index=False))
+
+    print("\n" + "=" * 80)
+    print("SHAP ANALYSIS COMPLETE")
+    print("=" * 80)
+    print(f"\nGenerated files in {output_dir}:")
+    print("  - shap_importance.png/svg - Feature importance (bar chart)")
+    print("  - shap_beeswarm.png/svg - Feature effects (beeswarm)")
+    print("  - shap_feature_importance.csv - Feature importance table")
+
+    return shap_values, feature_importance_df, figures
+
+
+################################ End of functions.py ###########################

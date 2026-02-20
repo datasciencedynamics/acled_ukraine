@@ -13,7 +13,7 @@ PROJECT_DIRECTORY := $(abspath $(MAKEFILE_DIR))
 ############################## Training Globals ################################
 
 # Define variables for looping
-OUTCOMES = fatalities
+OUTCOMES = log_fatalities
 PIPELINES = orig orig_rfe
 SCORING = r2
 PRETRAINED ?= 0  # 0 if you want to train the models, 1 if calibrate pretrained
@@ -21,8 +21,8 @@ PRETRAINED ?= 0  # 0 if you want to train the models, 1 if calibrate pretrained
 ############################# Production Globals ###############################
 
 # Model outcome variable used in production 
-EXPLAN_OUTCOME = fatalities # explainer outcome variable
-PROD_OUTCOME = fatalities # production outcome variable
+EXPLAN_OUTCOME = log_fatalities # explainer outcome variable
+PROD_OUTCOME = log_fatalities # production outcome variable
 
 # ------------------------------------------------------------------------------
 # COMMANDS
@@ -176,17 +176,11 @@ data_gen:
 		--input-data-file "./data/raw/ACLED Data_2026-01-02.csv" \
 		--output-data-file "./data/raw/acled_ukraine_data_2026_01_02.parquet"
 
-.PHONY: build_text_base
-build_text_base:
-	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/build_text_base.py \
+.PHONY: temporal_splits
+temporal_splits:
+	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/temporal_splits.py \
 		--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
-		--output-data-file ./data/processed/text_base.parquet
-
-.PHONY: clean_text
-clean_text:
-	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/build_catboost_text.py \
-		--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
-		--output-data-file ./data/processed/catboost_text.parquet
+		--data-path ./data/processed
 
 .PHONY: data_prep_preprocessing_training
 data_prep_preprocessing_training:
@@ -196,6 +190,24 @@ data_prep_preprocessing_training:
 	--stage training \
 	--data-path ./data/processed
 
+.PHONY: build_text_base
+build_text_base:
+	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/build_text_base.py \
+		--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
+		--output-data-file ./data/processed/text_base.parquet
+
+.PHONY: build_text_embeddings
+build_text_embeddings:
+	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/build_text_embeddings.py \
+		--input-data-file ./data/processed/text_base.parquet \
+		--output-data-file ./data/processed/text_embeddings.parquet
+
+.PHONY: remove_notes_leakage
+remove_notes_leakage:
+	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/remove_notes_leakage.py \
+		--input-file ./data/processed/text_base.parquet \
+		--output-file ./data/processed/text_base_no_leakage.parquet
+
 .PHONY: feat_gen_training
 feat_gen_training:
 	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/feat_gen.py \
@@ -204,7 +216,9 @@ feat_gen_training:
 	--data-path ./data/processed
 
 
-preproc_pipeline: data_gen data_prep_preprocessing_training feat_gen_training
+preproc_pipeline: data_gen temporal_splits data_prep_preprocessing_training  \
+				  feat_gen_training 
+				  
 
 ################################################################################
 ################################# Training #####################################
@@ -221,8 +235,7 @@ train_lr:
 				--model-type lr \
 				--pipeline-type $$p \
 				--outcome $$o \
-				--labels-path ./data/processed/y_$$o.parquet \
-				--features-path ./data/processed/X.parquet \
+				--data-path ./data/processed \
 				--pretrained $(PRETRAINED) \
 				--scoring $(SCORING) \
 				2>&1 | tee models/results/$$o/lr_$$p.txt; \
@@ -239,8 +252,7 @@ train_lasso:
 				--model-type lasso \
 				--pipeline-type $$p \
 				--outcome $$o \
-				--labels-path ./data/processed/y_$$o.parquet \
-				--features-path ./data/processed/X.parquet \
+				--data-path ./data/processed \
 				--pretrained $(PRETRAINED) \
 				--scoring $(SCORING) \
 				2>&1 | tee models/results/$$o/lasso_$$p.txt; \
@@ -257,8 +269,7 @@ train_xgb:
 				--model-type xgb \
 				--pipeline-type $$p \
 				--outcome $$o \
-				--labels-path ./data/processed/y_$$o.parquet \
-				--features-path ./data/processed/X.parquet \
+				--data-path ./data/processed \
 				--pretrained $(PRETRAINED) \
 				--scoring $(SCORING) \
 				2>&1 | tee models/results/$$o/xgb_$$p.txt; \
@@ -275,14 +286,12 @@ train_cat:
 				--model-type cat \
 				--pipeline-type $$p \
 				--outcome $$o \
-				--labels-path ./data/processed/y_$$o.parquet \
-				--features-path ./data/processed/X.parquet \
+				--data-path ./data/processed \
 				--pretrained $(PRETRAINED) \
 				--scoring $(SCORING) \
 				2>&1 | tee models/results/$$o/cat_$$p.txt; \
 		done; \
 	done
-
 
 train_all_models: train_lr train_lasso train_xgb train_cat
 
@@ -300,8 +309,7 @@ eval_lr:
 				--pipeline-type $$p \
 				--outcome $$o \
 				--outcome-name $$o \
-				--labels-path ./data/processed/y_$$o.parquet \
-				--features-path ./data/processed/X.parquet \
+				--data-path ./data/processed \
 				2>&1 | tee models/eval/$$o/eval_lr_$$p.txt; \
 		done; \
 	done
@@ -316,8 +324,7 @@ eval_lasso:
 				--pipeline-type $$p \
 				--outcome $$o \
 				--outcome-name $$o \
-				--labels-path ./data/processed/y_$$o.parquet \
-				--features-path ./data/processed/X.parquet \
+				--data-path ./data/processed \
 				2>&1 | tee models/eval/$$o/eval_lasso_$$p.txt; \
 		done; \
 	done
@@ -332,8 +339,7 @@ eval_xgb:
 				--pipeline-type $$p \
 				--outcome $$o \
 				--outcome-name $$o \
-				--labels-path ./data/processed/y_$$o.parquet \
-				--features-path ./data/processed/X.parquet \
+				--data-path ./data/processed \
 				2>&1 | tee models/eval/$$o/eval_xgb_$$p.txt; \
 		done; \
 	done
@@ -348,8 +354,7 @@ eval_cat:
 				--pipeline-type $$p \
 				--outcome $$o \
 				--outcome-name $$o \
-				--labels-path ./data/processed/y_$$o.parquet \
-				--features-path ./data/processed/X.parquet \
+				--data-path ./data/processed \
 				2>&1 | tee models/eval/$$o/eval_cat_$$p.txt; \
 		done; \
 	done
