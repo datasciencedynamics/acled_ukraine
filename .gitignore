@@ -171,3 +171,4 @@ Images/
 
 # Ignore images
 images/.DS_Store
+notebooks/*.png

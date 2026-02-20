@@ -225,9 +225,9 @@ def main(
     # logic to keep the pipeline consistent.
     ############################################################################
 
-    train_df = normalize_split(train_df)
-    valid_df = normalize_split(valid_df)
-    test_df = normalize_split(test_df)
+    # train_df = normalize_split(train_df)
+    # valid_df = normalize_split(valid_df)
+    # test_df = normalize_split(test_df)
 
     # print(
     #     f"\nTop 10 Normalized Actor 1 Names (TRAIN): \n{train_df['actor1_root'].value_counts().head(10)}"
