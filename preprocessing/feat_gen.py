@@ -7,10 +7,12 @@ import pandas as pd
 import numpy as np
 import typer
 
+from core.config import numerical_cols, categorical_cols
 from core.functions import mlflow_dumpArtifact, mlflow_loadArtifact
 
 from core.constants import (
     var_index,
+    event_date,
     exp_artifact_name,
     preproc_run_name,
     target_outcome,
@@ -58,9 +60,9 @@ def main(
         print("Loading temporal splits...")
         print("=" * 80)
 
-        train_df = pd.read_parquet(os.path.join(data_path, "train_df.parquet"))
-        valid_df = pd.read_parquet(os.path.join(data_path, "valid_df.parquet"))
-        test_df = pd.read_parquet(os.path.join(data_path, "test_df.parquet"))
+        train_df = pd.read_parquet(os.path.join(data_path, "train.parquet"))
+        valid_df = pd.read_parquet(os.path.join(data_path, "valid.parquet"))
+        test_df = pd.read_parquet(os.path.join(data_path, "test.parquet"))
 
         # Ensure index is set for all splits
         for name, df in [
@@ -73,10 +75,17 @@ def main(
             except KeyError:
                 print(f"Index '{var_index}' already set or doesn't exist in {name}")
 
-        # Drop event_date - not needed for training
+        # Drop event_date and index column - not needed for training
+        cols_to_drop = [event_date]
+
+        # Check if 'index' column exists (shouldn't be a feature)
+        if "index" in train_df.columns:
+            cols_to_drop.append("index")
+
         for df in [train_df, valid_df, test_df]:
-            if "event_date" in df.columns:
-                df.drop(columns=["event_date"], inplace=True)
+            for col in cols_to_drop:
+                if col in df.columns:
+                    df.drop(columns=[col], inplace=True)
 
         print(f"\nTrain shape: {train_df.shape}")
         print(f"Valid shape: {valid_df.shape}")
@@ -116,6 +125,7 @@ def main(
 
         print(f"\nX_train shape: {X_train.shape}")
         print(f"Number of features: {len(X_columns_list)}")
+        print(f"\nFirst 5 feature names: {X_columns_list[:5]}")
         print(f"\nFirst 5 rows of X_train:")
         print(X_train.head())
         print(f"\nFirst 5 rows of y_train (regular):")

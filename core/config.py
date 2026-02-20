@@ -74,7 +74,13 @@ rfe = RFE(
 ################################################################################
 # This section here is for categorical variables
 
-categorical_cols = ['admin1', 'sub_event_type', 'interaction']
+categorical_cols = [
+    "admin1",
+    "sub_event_type",
+    "interaction",
+    "source_scale",
+    "geo_precision",
+]
 
 # Load feature column names from Mlflow
 try:
