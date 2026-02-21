@@ -10,6 +10,7 @@ from sklearn.metrics import r2_score
 # ------------------------------------------------------------------
 from core.functions import (
     plot_actual_vs_predicted,
+    adjusted_r2,
     plot_cumulative_fatalities_captured,
     print_capture_summary,
     create_shap_plots,
@@ -117,6 +118,8 @@ def main(
     # STEP 5: Metrics by split
     # --------------------------------------------------------------
     split_metrics = {}
+    log_r2_results = {}
+    n_features = X_train.shape[1]
 
     for split, (X_s, y_s) in splits.items():
         print("\n" + "*" * 80)
@@ -135,6 +138,18 @@ def main(
             for k, v in metrics.items()
             if isinstance(v, (int, float)) and not isinstance(v, bool)
         }
+
+        # Compute log-scale R² and Adjusted R²
+        y_pred_s = model.predict(X_s)
+        r2_log = r2_score(y_s, y_pred_s)
+        adj_r2_log = adjusted_r2(r2_log, n=len(y_s), p=n_features)
+
+        numeric_metrics["r2"] = r2_log
+        numeric_metrics["adj_r2"] = adj_r2_log
+        log_r2_results[split] = r2_log
+
+        print(f"  R²:      {r2_log:.4f}")
+        print(f"  Adj R²:  {adj_r2_log:.4f}")
 
         for k, v in numeric_metrics.items():
             split_metrics[f"{split}_{k}"] = v
@@ -285,7 +300,7 @@ def main(
     shap_output_dir = Path("./models/eval") / outcome / estimator_name
     shap_output_dir.mkdir(parents=True, exist_ok=True)
 
-    shap_values, shap_importance, shap_figs = create_shap_plots(
+    _, shap_importance, shap_figs = create_shap_plots(
         model=model,
         X_train=X_train,
         X_test=X_test,

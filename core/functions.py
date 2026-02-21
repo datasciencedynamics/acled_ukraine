@@ -1700,6 +1700,9 @@ def create_shap_plots(
     print("GENERATING SHAP EXPLANATIONS")
     print("=" * 80)
 
+    import scipy.sparse as sp
+    from sklearn.pipeline import Pipeline
+
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1707,35 +1710,27 @@ def create_shap_plots(
     figures = {}
 
     # --------------------------------------------------------------
-    # STEP 1: Extract the actual XGBoost model from wrapper
+    # STEP 1: Extract the actual estimator from wrapper
     # --------------------------------------------------------------
-    print("\n[1/6] Extracting XGBoost model from wrapper...")
+    print("\n[1/6] Extracting estimator from wrapper...")
 
-    # Get the fitted pipeline
     fitted_pipeline = model.estimator
-
-    # Get the final XGBoost estimator (last step in pipeline)
-    xgb_model = fitted_pipeline.steps[-1][1]
-
-    print(f"Extracted model type: {type(xgb_model)}")
+    estimator = fitted_pipeline.steps[-1][1]
+    estimator_type = type(estimator).__name__
+    print(f"Extracted model type: {estimator_type}")
 
     # --------------------------------------------------------------
     # STEP 2: Transform training data through preprocessing pipeline
     # --------------------------------------------------------------
     print("\n[2/6] Transforming data through preprocessing pipeline...")
 
-    # Get all steps EXCEPT the final estimator
     preprocessing_steps = fitted_pipeline.steps[:-1]
-
-    # Create a pipeline with just preprocessing
-    from sklearn.pipeline import Pipeline
 
     if preprocessing_steps:
         preprocessing_pipeline = Pipeline(preprocessing_steps)
         X_train_transformed = preprocessing_pipeline.transform(X_train)
         X_test_transformed = preprocessing_pipeline.transform(X_test)
     else:
-        # No preprocessing steps
         X_train_transformed = X_train.values
         X_test_transformed = X_test.values
 
@@ -1743,20 +1738,30 @@ def create_shap_plots(
     print(f"Test data shape after preprocessing: {X_test_transformed.shape}")
 
     # --------------------------------------------------------------
-    # STEP 3: Create SHAP Explainer on transformed data
+    # STEP 3: Create SHAP Explainer based on model type
     # --------------------------------------------------------------
-    print("\n[3/6] Creating SHAP TreeExplainer...")
+    print("\n[3/6] Creating SHAP Explainer...")
 
-    # TreeExplainer works directly with XGBoost models
-    explainer = shap.TreeExplainer(xgb_model)
-    print("Using TreeExplainer (fast, exact for tree models)")
+    tree_based = any(
+        name in estimator_type.lower()
+        for name in ["xgb", "catboost", "gradientboosting", "randomforest", "tree"]
+    )
+
+    if tree_based:
+        explainer = shap.TreeExplainer(estimator)
+        print("Using TreeExplainer")
+    else:
+        background = X_train_transformed
+        if sp.issparse(background):
+            background = background.toarray()
+        explainer = shap.LinearExplainer(estimator, background)
+        print("Using LinearExplainer")
 
     # --------------------------------------------------------------
     # STEP 4: Calculate SHAP Values on Test Set
     # --------------------------------------------------------------
     print(f"\n[4/6] Calculating SHAP values for {sample_size} test samples...")
 
-    # Sample test data for speed
     if X_test_transformed.shape[0] > sample_size:
         sample_indices = np.random.choice(
             X_test_transformed.shape[0], size=sample_size, replace=False
@@ -1774,27 +1779,19 @@ def create_shap_plots(
 
     # Get feature names after transformation
     try:
-        # Try to get feature names from pipeline
         feature_names = fitted_pipeline[:-1].get_feature_names_out()
     except:
-        # Fallback: use numeric indices
         feature_names = [f"feature_{i}" for i in range(X_sample.shape[1])]
 
     print(f"Features: {len(feature_names)}")
 
-    # ============================================================
-    # NEW: Convert sparse matrix to dense DataFrame for SHAP plots
-    # ============================================================
-    import scipy.sparse as sp
-
+    # Convert sparse matrix to dense DataFrame for SHAP plots
     if sp.issparse(X_sample):
         X_sample = X_sample.toarray()
         print("Converted sparse matrix to dense array")
 
-    # Convert to DataFrame with feature names for better SHAP visualization
     X_sample = pd.DataFrame(X_sample, columns=feature_names)
     print(f"Converted to DataFrame with feature names for SHAP visualization")
-    # ============================================================
 
     # --------------------------------------------------------------
     # STEP 5: Summary Plot (Bar) - Feature Importance
@@ -1813,13 +1810,10 @@ def create_shap_plots(
     plt.title("SHAP Feature Importance", fontsize=14, fontweight="bold")
     plt.tight_layout()
 
-    # Save to file
     plt.savefig(output_dir / "shap_importance.png", dpi=300, bbox_inches="tight")
     plt.savefig(output_dir / "shap_importance.svg", bbox_inches="tight")
 
-    # Store figure (don't close yet!)
     figures["shap_importance"] = fig_importance
-
     print(f"Saved: {output_dir}/shap_importance.png")
 
     # --------------------------------------------------------------
@@ -1838,13 +1832,10 @@ def create_shap_plots(
     plt.title("SHAP Summary Plot (Feature Effects)", fontsize=14, fontweight="bold")
     plt.tight_layout()
 
-    # Save to file
     plt.savefig(output_dir / "shap_beeswarm.png", dpi=300, bbox_inches="tight")
     plt.savefig(output_dir / "shap_beeswarm.svg", bbox_inches="tight")
 
-    # Store figure (don't close yet!)
     figures["shap_beeswarm"] = fig_beeswarm
-
     print(f"Saved: {output_dir}/shap_beeswarm.png")
 
     # --------------------------------------------------------------
@@ -1861,7 +1852,6 @@ def create_shap_plots(
         }
     ).sort_values("importance", ascending=False)
 
-    # Save to CSV
     feature_importance_df.to_csv(
         output_dir / "shap_feature_importance.csv", index=False
     )
@@ -1878,6 +1868,16 @@ def create_shap_plots(
     print("  - shap_feature_importance.csv - Feature importance table")
 
     return shap_values, feature_importance_df, figures
+
+
+############################## Regression Metrics ##############################
+
+
+def adjusted_r2(r2: float, n: int, p: int) -> float:
+    """Compute adjusted R² given R², sample size n, and number of features p."""
+    if n <= p + 1:
+        return float("nan")
+    return 1 - (1 - r2) * (n - 1) / (n - p - 1)
 
 
 ################################ End of functions.py ###########################
