@@ -12,9 +12,9 @@ import pickle
 import os
 import networkx as nx
 import shap
-from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OrdinalEncoder
+from sklearn.pipeline import FunctionTransformer, Pipeline
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
 from imblearn.over_sampling import SMOTE
 from sklearn.feature_selection import RFE
@@ -128,35 +128,61 @@ def clean_feature_selection_params(pipeline_steps, tuned_parameters):
                 del tuned_parameters[0][key]
 
 
+def to_str_func(X):
+    # Convert categorical values to strings.
+    # CatBoost can consume string categories directly, and this ensures
+    # consistent dtype handling after imputation.
+    return X.astype(str)
+
+    # IMPORTANT:
+    # ColumnTransformer.get_feature_names_out() requires every
+    # transformer in the pipeline to implement feature name
+    # propagation. FunctionTransformer does not provide this
+    # by default, which causes:
+    #
+    # AttributeError:
+    #   Estimator to_str does not provide get_feature_names_out
+    #
+    # Setting feature_names_out="one-to-one" tells sklearn that:
+    #
+    #   • output columns == input columns
+    #   • no columns are added, removed, or renamed
+    #
+    # This enables safe feature lineage tracking and allows:
+    #
+    #   pipeline.get_feature_names_out()
+    #
+    # to work correctly.
+
+
 def adjust_preprocessing_pipeline(
     model_type,
     pipeline_steps,
     numerical_cols,
     categorical_cols,
-    sampler=None,  # Add sampler as an optional argument
+    sampler=None,
 ):
     no_scale_models = ["xgb", "cat"]
     has_rfe = any(isinstance(step[1], RFE) for step in pipeline_steps)
-    use_smote = isinstance(sampler, SMOTE)  # Check if sampler is SMOTE
+    use_smote = isinstance(sampler, SMOTE)
 
     if model_type in no_scale_models:
-        # Impute if RFE or SMOTE is present
         if has_rfe or use_smote:
             numerical_transformer = Pipeline(
                 steps=[("imputer", SimpleImputer(strategy="mean"))],
             )
+            # Both xgb and cat need numeric input for RFE (Ridge can't handle strings)
             categorical_transformer = Pipeline(
                 steps=[
                     (
                         "imputer",
-                        SimpleImputer(
-                            strategy="constant",
-                            fill_value="missing",
-                        ),
+                        SimpleImputer(strategy="constant", fill_value="__MISSING__"),
                     ),
                     (
-                        "encoder",
-                        OneHotEncoder(handle_unknown="ignore"),
+                        "ordinal",
+                        OrdinalEncoder(
+                            handle_unknown="use_encoded_value", unknown_value=-1
+                        ),
                     ),
                 ]
             )
@@ -164,11 +190,41 @@ def adjust_preprocessing_pipeline(
             numerical_transformer = Pipeline(
                 steps=[("passthrough", "passthrough")],
             )
-            categorical_transformer = Pipeline(
-                steps=[
-                    ("encoder", OneHotEncoder(handle_unknown="ignore")),
-                ]
-            )
+            if model_type == "xgb":
+                categorical_transformer = Pipeline(
+                    steps=[
+                        (
+                            "imputer",
+                            SimpleImputer(
+                                strategy="constant", fill_value="__MISSING__"
+                            ),
+                        ),
+                        (
+                            "ordinal",
+                            OrdinalEncoder(
+                                handle_unknown="use_encoded_value", unknown_value=-1
+                            ),
+                        ),
+                    ]
+                )
+            elif model_type == "cat":
+                categorical_transformer = Pipeline(
+                    steps=[
+                        (
+                            "imputer",
+                            SimpleImputer(
+                                strategy="constant", fill_value="__MISSING__"
+                            ),
+                        ),
+                        (
+                            "to_str",
+                            FunctionTransformer(
+                                to_str_func,
+                                feature_names_out="one-to-one",
+                            ),
+                        ),
+                    ]
+                )
 
         adjusted_preprocessor = ColumnTransformer(
             transformers=[
@@ -1793,6 +1849,19 @@ def create_shap_plots(
     X_sample = pd.DataFrame(X_sample, columns=feature_names)
     print(f"Converted to DataFrame with feature names for SHAP visualization")
 
+    # Build display copy with proper numeric types for SHAP coloring
+    from sklearn.preprocessing import LabelEncoder
+
+    X_sample_display = X_sample.copy()
+    for col in X_sample_display.columns:
+        if col.startswith("num__"):
+            X_sample_display[col] = pd.to_numeric(
+                X_sample_display[col], errors="coerce"
+            )
+        elif col.startswith("cat__"):
+            le = LabelEncoder()
+            X_sample_display[col] = le.fit_transform(X_sample_display[col].astype(str))
+
     # --------------------------------------------------------------
     # STEP 5: Summary Plot (Bar) - Feature Importance
     # --------------------------------------------------------------
@@ -1824,8 +1893,8 @@ def create_shap_plots(
     fig_beeswarm = plt.figure(figsize=(10, 8))
     shap.summary_plot(
         shap_values,
-        X_sample,
-        feature_names=feature_names,
+        X_sample_display.values,  # numpy array, not DataFrame
+        feature_names=list(X_sample_display.columns),
         max_display=max_display,
         show=False,
     )

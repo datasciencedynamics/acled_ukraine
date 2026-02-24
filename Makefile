@@ -14,7 +14,8 @@ PROJECT_DIRECTORY := $(abspath $(MAKEFILE_DIR))
 
 # Define variables for looping
 OUTCOMES = log_fatalities
-PIPELINES = orig orig_rfe
+# PIPELINES = orig orig_rfe
+PIPELINES = orig_rfe
 SCORING = r2
 PRETRAINED ?= 0  # 0 if you want to train the models, 1 if calibrate pretrained
 

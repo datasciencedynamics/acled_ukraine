@@ -21,7 +21,6 @@ from core.functions import (
 )
 
 from core.constants import (
-    target_outcome,
     target_log_outcome,
     mlflow_models_data,
 )
@@ -40,7 +39,7 @@ app = typer.Typer()
 
 @app.command()
 def main(
-    model_type: str = "xgb",
+    model_type: str = "cat",
     pipeline_type: str = "orig",
     outcome: str = target_log_outcome,
     outcome_name: str = None,  # Optional: defaults to outcome
