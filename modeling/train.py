@@ -1,8 +1,10 @@
 from pathlib import Path
-
+from xml.parsers.expat import model
+from sklearn.feature_selection import RFE
 import typer
 from loguru import logger
 import pandas as pd
+import numpy as np
 from model_tuner import Model
 
 ################################################################################
@@ -36,8 +38,8 @@ app = typer.Typer()
 @app.command()
 def main(
     # ---- REPLACE DEFAULT PATHS AS APPROPRIATE ---
-    model_type: str = "xgb",
-    pipeline_type: str = "orig",
+    model_type: str = "cat",
+    pipeline_type: str = "orig_rfe",
     outcome: str = target_log_outcome,
     data_path: Path = PROCESSED_DATA_DIR,
     scoring: str = "r2",
@@ -147,6 +149,13 @@ def main(
             ]
             break
 
+    has_rfe = any(isinstance(step[1], RFE) for step in pipeline_steps)
+    cat_feature_indices = list(range(len(num_cols), len(num_cols) + len(cat_cols)))
+    fit_params = (
+        {"cat__cat_features": cat_feature_indices}
+        if model_type == "cat" and not has_rfe
+        else {}
+    )
     ################################################################################
     # Step 6. Printing Outcome
     ################################################################################
@@ -195,7 +204,15 @@ def main(
         # Step 8. Perform Hyperparameter Tuning
         ################################################################################
 
-        model.grid_search_param_tuning(X, y, custom_splits=custom_splits)
+        if model_type in {"xgb", "cat"}:
+            model.grid_search_param_tuning(
+                X,
+                y,
+                custom_splits=custom_splits,
+                fit_params=fit_params,
+            )
+        else:
+            model.grid_search_param_tuning(X, y, custom_splits=custom_splits)
 
     ################################################################################
     # Step 9. Train the Model
@@ -214,6 +231,7 @@ def main(
                 y_train,
                 validation_data=(X_valid, y_valid),
                 score=scoring,
+                fit_params=fit_params,
             )
         else:
             model.fit(
