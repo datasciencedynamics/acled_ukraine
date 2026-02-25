@@ -11,7 +11,7 @@ from model_tuner import Model
 # Step 1. Import Configurations and Constants
 ################################################################################
 
-from core.constants import target_outcome, target_log_outcome
+from core.constants import target_log_outcome
 
 from core.config import (
     PROCESSED_DATA_DIR,
@@ -38,8 +38,8 @@ app = typer.Typer()
 @app.command()
 def main(
     # ---- REPLACE DEFAULT PATHS AS APPROPRIATE ---
-    model_type: str = "cat",
-    pipeline_type: str = "orig_rfe",
+    model_type: str = "xgb",
+    pipeline_type: str = "orig",
     outcome: str = target_log_outcome,
     data_path: Path = PROCESSED_DATA_DIR,
     scoring: str = "r2",
@@ -59,6 +59,19 @@ def main(
     X_train = pd.read_parquet(data_path / "X_train.parquet")
     X_valid = pd.read_parquet(data_path / "X_valid.parquet")
     X_test = pd.read_parquet(data_path / "X_test.parquet")
+
+    # Cast categoricals for XGBoost native categorical handling.
+    # Categories must be defined from the combined data to ensure consistent
+    # integer codes across all splits — mismatched codes would corrupt XGBoost's
+    # categorical handling and tank model performance.
+    if model_type == "xgb" and pipeline_type == "orig":
+        for col in categorical_cols:
+            combined_cats = pd.Categorical(
+                pd.concat([X_train[col], X_valid[col], X_test[col]])
+            ).categories
+            X_train[col] = pd.Categorical(X_train[col], categories=combined_cats)
+            X_valid[col] = pd.Categorical(X_valid[col], categories=combined_cats)
+            X_test[col] = pd.Categorical(X_test[col], categories=combined_cats)
 
     # Load y splits based on outcome
     y_train = pd.read_parquet(data_path / f"y_train_{outcome}.parquet").iloc[:, 0]
@@ -128,7 +141,6 @@ def main(
     # for binary classification models; also applicable to regression models for 'xgb' and 'cat'
 
     # Clean numerical_cols and categorical_cols
-
     num_cols = [c for c in numerical_cols if c in X.columns]
     cat_cols = [c for c in categorical_cols if c in X.columns]
 
@@ -151,11 +163,16 @@ def main(
 
     has_rfe = any(isinstance(step[1], RFE) for step in pipeline_steps)
     cat_feature_indices = list(range(len(num_cols), len(num_cols) + len(cat_cols)))
-    fit_params = (
-        {"cat__cat_features": cat_feature_indices}
-        if model_type == "cat" and not has_rfe
-        else {}
-    )
+
+    # Determine fit_params based on model type and pipeline configuration:
+    # - CatBoost (no RFE): pass cat_features indices for native categorical handling
+    # - XGBoost (no RFE): enable_categorical=True already set in config; no fit_params needed
+    # - RFE path (both): OrdinalEncoder used; no special fit_params needed
+    if model_type == "cat" and not has_rfe:
+        fit_params = {"cat__cat_features": cat_feature_indices}
+    else:
+        fit_params = {}
+
     ################################################################################
     # Step 6. Printing Outcome
     ################################################################################
@@ -218,14 +235,27 @@ def main(
     # Step 9. Train the Model
     ################################################################################
 
-    # Boosting algorithms like XGBoost and CatBoost benefit from validation data
-    # during training to optimize early stopping and prevent overfitting.
-    # Hence, we explicitly provide the validation dataset in the `fit` method
-    # for these models. For other models, validation data is not required at this
-    # stage.
-
     if not pretrained:
-        if model_type in {"xgb", "cat"}:
+        if model_type == "cat" and not has_rfe:
+            # CatBoost native categorical: validation_data safe, cat_features passed
+            model.fit(
+                X_train,
+                y_train,
+                validation_data=(X_valid, y_valid),
+                score=scoring,
+                fit_params=fit_params,
+            )
+        elif model_type == "xgb" and not has_rfe:
+            # XGBoost native categorical: category dtype preserved via set_output("pandas")
+            # on ColumnTransformer; consistent codes ensured by combined_cats above
+            model.fit(
+                X_train,
+                y_train,
+                validation_data=(X_valid, y_valid),
+                score=scoring,
+            )
+        elif model_type in {"xgb", "cat"}:
+            # RFE path: OrdinalEncoder used, validation_data safe
             model.fit(
                 X_train,
                 y_train,
@@ -242,7 +272,6 @@ def main(
 
     ################################################################################
     # Step 10. Report Metrics (Train / Validation / Test)
-    # see the results printed to the terminal for reference
     ################################################################################
 
     print()

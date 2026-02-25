@@ -12,7 +12,7 @@ import pickle
 import os
 import networkx as nx
 import shap
-from sklearn.preprocessing import OrdinalEncoder
+from sklearn.preprocessing import OneHotEncoder
 from sklearn.pipeline import FunctionTransformer, Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
@@ -155,6 +155,18 @@ def to_str_func(X):
     # to work correctly.
 
 
+def get_cat_feature_indices(preprocessor, num_cols, cat_cols):
+    """
+    Return categorical feature indices AFTER ColumnTransformer.
+    Assumes transformer order: num → cat
+    """
+
+    if len(cat_cols) == 0:
+        return []
+
+    return list(range(len(num_cols), len(num_cols) + len(cat_cols)))
+
+
 def adjust_preprocessing_pipeline(
     model_type,
     pipeline_steps,
@@ -171,7 +183,6 @@ def adjust_preprocessing_pipeline(
             numerical_transformer = Pipeline(
                 steps=[("imputer", SimpleImputer(strategy="mean"))],
             )
-            # Both xgb and cat need numeric input for RFE (Ridge can't handle strings)
             categorical_transformer = Pipeline(
                 steps=[
                     (
@@ -179,10 +190,8 @@ def adjust_preprocessing_pipeline(
                         SimpleImputer(strategy="constant", fill_value="__MISSING__"),
                     ),
                     (
-                        "ordinal",
-                        OrdinalEncoder(
-                            handle_unknown="use_encoded_value", unknown_value=-1
-                        ),
+                        "encoder",
+                        OneHotEncoder(handle_unknown="ignore", sparse_output=False),
                     ),
                 ]
             )
@@ -194,15 +203,10 @@ def adjust_preprocessing_pipeline(
                 categorical_transformer = Pipeline(
                     steps=[
                         (
-                            "imputer",
-                            SimpleImputer(
-                                strategy="constant", fill_value="__MISSING__"
-                            ),
-                        ),
-                        (
-                            "ordinal",
-                            OrdinalEncoder(
-                                handle_unknown="use_encoded_value", unknown_value=-1
+                            "to_cat",
+                            FunctionTransformer(
+                                lambda X: X.astype("category"),
+                                feature_names_out="one-to-one",
                             ),
                         ),
                     ]
@@ -233,6 +237,13 @@ def adjust_preprocessing_pipeline(
             ],
             remainder="passthrough",
         )
+
+        # set_output("pandas") preserves category dtype through ColumnTransformer
+        # so XGBoost receives a DataFrame with proper category columns intact
+        # rather than a numpy object array where dtype info is lost
+        if model_type == "xgb" and not has_rfe and not use_smote:
+            adjusted_preprocessor.set_output(transform="pandas")
+
         return [
             (name, adjusted_preprocessor if name == "Preprocessor" else step)
             for name, step in pipeline_steps
@@ -1822,7 +1833,10 @@ def create_shap_plots(
         sample_indices = np.random.choice(
             X_test_transformed.shape[0], size=sample_size, replace=False
         )
-        X_sample = X_test_transformed[sample_indices]
+        if hasattr(X_test_transformed, "iloc"):
+            X_sample = X_test_transformed.iloc[sample_indices]
+        else:
+            X_sample = X_test_transformed[sample_indices]
         y_sample = y_test.iloc[sample_indices]
     else:
         X_sample = X_test_transformed

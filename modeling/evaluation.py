@@ -28,6 +28,7 @@ from core.constants import (
 from core.config import (
     PROCESSED_DATA_DIR,
     model_definitions,
+    categorical_cols,
 )
 
 app = typer.Typer()
@@ -39,7 +40,7 @@ app = typer.Typer()
 
 @app.command()
 def main(
-    model_type: str = "cat",
+    model_type: str = "xgb",
     pipeline_type: str = "orig",
     outcome: str = target_log_outcome,
     outcome_name: str = None,  # Optional: defaults to outcome
@@ -93,6 +94,15 @@ def main(
     X_train = pd.read_parquet(data_path / "X_train.parquet")
     X_valid = pd.read_parquet(data_path / "X_valid.parquet")
     X_test = pd.read_parquet(data_path / "X_test.parquet")
+
+    if model_type == "xgb" and pipeline_type == "orig":
+        for col in categorical_cols:
+            combined_cats = pd.Categorical(
+                pd.concat([X_train[col], X_valid[col], X_test[col]])
+            ).categories
+            X_train[col] = pd.Categorical(X_train[col], categories=combined_cats)
+            X_valid[col] = pd.Categorical(X_valid[col], categories=combined_cats)
+            X_test[col] = pd.Categorical(X_test[col], categories=combined_cats)
 
     # Load y splits based on outcome
     y_train = pd.read_parquet(data_path / f"y_train_{outcome}.parquet").iloc[:, 0]
