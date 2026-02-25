@@ -254,6 +254,7 @@ xgb = XGBRegressor(
     tree_method="hist",
     device="cuda",
     n_jobs=16,
+    enable_categorical=True,
 )
 
 # Define the hyperparameters for XGBoost
