@@ -148,6 +148,7 @@ dmypy.json
 # Directories to be ignored
 Data/
 data/
+data_output/
 data_splits/
 structured_data_regressor/
 catboost_info/
