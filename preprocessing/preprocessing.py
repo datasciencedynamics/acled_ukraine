@@ -217,124 +217,7 @@ def main(
     ############################################################################
 
     ############################################################################
-    # Step 5. Normalize Actor Names and Create Missing Indicator
-    ############################################################################
-    # Normalize actor names in 'actor1' and 'actor2' columns to ensure
-    # consistency and reduce variability caused by different naming conventions.
-    # This step helps in better analysis and modeling by standardizing the
-    # representation of actors involved in events.
-    #
-    # IMPORTANT UPDATE:
-    # We normalize EACH SPLIT independently but using the same normalize_split()
-    # logic to keep the pipeline consistent.
-    ############################################################################
-
-    # train_df = normalize_split(train_df)
-    # valid_df = normalize_split(valid_df)
-    # test_df = normalize_split(test_df)
-
-    # print(
-    #     f"\nTop 10 Normalized Actor 1 Names (TRAIN): \n{train_df['actor1_root'].value_counts().head(10)}"
-    # )
-    # print(
-    #     f"\nTop 10 Normalized Actor 2 Names (TRAIN): \n{train_df['actor2_root'].value_counts().head(10)}"
-    # )
-
-    # ############################################################################
-    # # Step 6. Build Actor Interaction Graph
-    # ############################################################################
-    # # COMMENTED OUT 2026-02-16: Removing embeddings for interpretability
-    # # Construct a graph representing interactions between actors based on
-    # # co-occurrences in events. This graph captures relationships and patterns
-    # # among actors, which can be useful for network analysis and feature
-    # # engineering in predictive modeling.
-    # #
-    # # IMPORTANT UPDATE:
-    # # Build the interaction graph ONLY from TRAIN data to prevent temporal leakage.
-    # ############################################################################
-    #
-    # G = build_actor_interaction_graph(train_df)
-    #
-    # ############################################################################
-    # # Step 7. Generate Node2Vec Embeddings
-    # ############################################################################
-    # # COMMENTED OUT 2026-02-16: Removing embeddings for interpretability
-    # # Generate Node2Vec embeddings for actors in the interaction graph.
-    # # These embeddings capture the structural relationships and properties
-    # # of actors within the network, providing valuable features for downstream
-    # # machine learning tasks.
-    # ############################################################################
-    #
-    # node2vec = Node2Vec(
-    #     G,
-    #     dimensions=32,
-    #     walk_length=10,
-    #     num_walks=50,
-    #     workers=1,
-    #     weight_key="weight",
-    #     seed=seed,
-    # )
-    #
-    # model = node2vec.fit(window=5, min_count=1, batch_words=4)
-    #
-    # ############################################################################
-    # # Step 8. Create Actor Embedding Features
-    # ############################################################################
-    # # COMMENTED OUT 2026-02-16: Removing embeddings for interpretability
-    # # Create embedding features for 'actor1' and 'actor2' based on the
-    # # Node2Vec model. These features capture the latent representations of
-    # # actors in the interaction network, enhancing the dataset with
-    # # informative attributes for machine learning models.
-    # ############################################################################
-    #
-    # embeddings = {node: model.wv[node] for node in G.nodes()}
-    #
-    # emb_df = pd.DataFrame.from_dict(embeddings, orient="index")
-    # emb_df.columns = [f"emb_{i}" for i in range(emb_df.shape[1])]
-    #
-    # # Save embeddings for reproducibility and future inference consistency
-    # emb_out = os.path.join(data_path, "actor_embeddings.parquet")
-    # emb_df.to_parquet(emb_out)
-    # print(f"\nSaved actor embeddings to: {emb_out}")
-    #
-    # ############################################################################
-    # # Step 9. Merge Actor Embeddings with Main DataFrame
-    # ############################################################################
-    # # COMMENTED OUT 2026-02-16: Removing embeddings for interpretability
-    # # Merge the actor embeddings with EACH temporal split to enrich them
-    # # with additional features derived from the interaction network.
-    # # This integration enhances the dataset, providing more informative
-    # # attributes for subsequent machine learning tasks.
-    # #
-    # # IMPORTANT UPDATE:
-    # # We apply embeddings learned from TRAIN graph to VALID/TEST.
-    # # Unseen actors will yield NaNs which we convert to zero vectors.
-    # ############################################################################
-    #
-    # train_df = apply_embeddings(train_df, emb_df)
-    # valid_df = apply_embeddings(valid_df, emb_df)
-    # test_df = apply_embeddings(test_df, emb_df)
-    #
-    # train_df.fillna(0, inplace=True)
-    # valid_df.fillna(0, inplace=True)
-    # test_df.fillna(0, inplace=True)
-    #
-    # #############################################################################
-    # # Step 9b. Add Pairwise Embedding Features
-    # #############################################################################
-    # # COMMENTED OUT 2026-02-16: Removing embeddings for interpretability
-    # # Add pairwise embedding features based on the normalized actor names. These features
-    # # capture the relationships between pairs of actors involved in events,
-    # # providing additional context and information for downstream analysis
-    # # and modeling tasks.
-    # #############################################################################
-    #
-    # train_df = add_pairwise_embedding_features(train_df)
-    # valid_df = add_pairwise_embedding_features(valid_df)
-    # test_df = add_pairwise_embedding_features(test_df)
-
-    ############################################################################
-    # Step 10. Re-encode `civilian_targeting` column to binarized format
+    # Step 5. Re-encode `civilian_targeting` column to binarized format
     ############################################################################
     # The `civilian_targeting` column is re-encoded to a binary format where
     # 1 indicates the presence of civilian targeting and 0 indicates its absence.
@@ -351,7 +234,7 @@ def main(
             _df["civilian_targeting"] = _df["civilian_targeting"].apply(to_binary)
 
     ############################################################################
-    # Step 11. Backfill missing admin1 using location
+    # Step 6. Backfill missing admin1 using location
     ############################################################################
     # If admin1 is missing or blank, use location as a proxy regional label.
     # This preserves spatial signal and avoids introducing artificial categories.
@@ -365,7 +248,7 @@ def main(
             _df["admin1"] = _df["admin1"].astype(str)
 
     ############################################################################
-    # Step 11b. Days Since Invasion Feature
+    # Step 6b. Days Since Invasion Feature
     ############################################################################
     # Compute the number of days between each event and the start of the
     # full-scale Russian invasion (2022-02-24). This gives the model a
@@ -380,43 +263,8 @@ def main(
                 pd.to_datetime(_df["event_date"]) - INVASION_DATE
             ).dt.days
 
-    # ############################################################################
-    # # Step 11c. Distance to Kyiv Feature
-    # ############################################################################
-    # # Compute the great-circle (haversine) distance in km from each event's
-    # # coordinates to Kyiv (50.4501, 30.5234).
-    # #
-    # # Why haversine over Euclidean:
-    # #   Euclidean distance on raw lat/lon is distorted because one degree of
-    # #   longitude shrinks with latitude (cos(lat) factor). Ukraine spans
-    # #   roughly 44–52°N, so this distortion is non-trivial. Haversine
-    # #   accounts for Earth's curvature and returns true surface distance in
-    # #   km, giving the model a physically meaningful and unit-consistent
-    # #   measure regardless of where in Ukraine the event occurs.
-    # #
-    # # Why distance to Kyiv matters:
-    # #   Kyiv is the political and military command centre of Ukraine.
-    # #   Proximity to the capital correlates with strategic importance,
-    # #   defensive investment, force concentration, and media/reporting
-    # #   density — all of which influence fatality outcomes. While raw
-    # #   lat/lon are available, the model would need to learn this radial
-    # #   relationship implicitly; providing it as an explicit feature
-    # #   reduces the learning burden and improves interpretability, since
-    # #   a SHAP value on dist_to_kyiv_km is directly explainable as
-    # #   "events closer to / farther from the capital tend to have
-    # #   higher/lower predicted fatalities."
-    # ############################################################################
-
-    # KYIV_LAT, KYIV_LON = 50.4501, 30.5234
-
-    # for _df in (train_df, valid_df, test_df):
-    #     if "latitude" in _df.columns and "longitude" in _df.columns:
-    #         _df["dist_to_kyiv_km"] = haversine_km(
-    #             _df["latitude"], _df["longitude"], KYIV_LAT, KYIV_LON
-    #         )
-
     ############################################################################
-    # Step 12. Drop Intermediate and Redundant Columns
+    # Step 7. Drop Intermediate and Redundant Columns
     ############################################################################
     # Drop intermediate columns used for normalization and embedding
     # generation to streamline the dataset and retain only relevant features
@@ -436,7 +284,7 @@ def main(
         _df.drop(columns=drop_vars, errors="ignore", inplace=True)
 
     ########################################################################
-    # Step 13. Ensure Numeric Data and Feature Engineering
+    # Step 8. Ensure Numeric Data and Feature Engineering
     ########################################################################
     # Convert any possible numeric values that may have been incorrectly
     # classified as non-numeric. This avoids accidental labeling errors.
@@ -450,7 +298,7 @@ def main(
     test_df = test_df.apply(lambda x: safe_to_numeric(x))
 
     ################################################################################
-    # Step 14. Zero Variance Columns
+    # Step 9. Zero Variance Columns
     ################################################################################
     # Select only numeric columns s/t .var() can be applied since you can only
     # call this function on numeric columns; otherwise, if you include a mix
@@ -469,6 +317,10 @@ def main(
         var_indf = train_df[numeric_cols].var()
         zero_var = var_indf[var_indf == 0]
         zero_varlist_list = list(zero_var.index)
+
+        print("-" * 80)
+        print(f"\n\nZero-variance columns: {zero_varlist_list}\n\n")
+        print("-" * 80)
 
         dumpObjects(
             zero_varlist_list,
@@ -499,7 +351,7 @@ def main(
     print(f"Test shape after dropping zero var cols:  {test_df.shape}")
 
     ############################################################################
-    # Step 15. Calculate Row-wise Missingness Percentage
+    # Step 10. Calculate Row-wise Missingness Percentage
     ############################################################################
     # This step computes the proportion of missing values for each row in the
     # DataFrame. It helps identify rows with a high level of incompleteness, which
@@ -524,7 +376,7 @@ def main(
         _df[obj_cols] = _df[obj_cols].astype(str)
 
     ############################################################################
-    # Step 17. Save Processed Data
+    # Step 11. Save Processed Data
     ############################################################################
     ############################################################################
 
