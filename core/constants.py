@@ -37,7 +37,7 @@ drop_vars = [
     "inter1",
     "inter2",
     "event_type",
-    "time_precision",
+    # "time_precision",
     # "geo_precision",
     "timestamp",
     "disorder_type",

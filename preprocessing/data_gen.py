@@ -2,6 +2,7 @@
 ######################### Import Requisite Libraries ###########################
 import typer
 import pandas as pd
+import os
 from pathlib import Path
 
 ################################################################################
@@ -9,6 +10,10 @@ from pathlib import Path
 from core.constants import var_index
 
 app = typer.Typer()
+
+print("\n" + "#" * 80)
+print(f"Running script: {os.path.basename(__file__)}")
+print("#" * 80 + "\n")
 
 
 @app.command()

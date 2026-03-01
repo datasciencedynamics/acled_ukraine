@@ -343,7 +343,7 @@ def main(
         )
     print(f"Logged {len(shap_figs)} SHAP SVG plots")
 
-    # Log SHAP importance CSV
+    # Log SHAP importance CSVs (collapsed + expanded)
     mlflow_dumpArtifact(
         experiment_name=experiment_name,
         run_name=run_name,

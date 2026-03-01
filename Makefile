@@ -168,57 +168,61 @@ create_folders:
 ####################### Preprocessing (+) Dataprep Pipeline ####################
 ################################################################################
 
-## TODO:  L.S. - update make and/or python scripts to adjust if input file does not contain csv
-
 .PHONY: data_gen
 data_gen:
 	$(PYTHON_INTERPRETER) preprocessing/data_gen.py \
 		--input-data-file "./data/raw/ACLED Data_2026-01-02.csv" \
-		--output-data-file "./data/raw/acled_ukraine_data_2026_01_02.parquet"
+		--output-data-file "./data/raw/acled_ukraine_data_2026_01_02.parquet" \
+		2>&1 | tee ./data/raw/data_gen.txt
 
 .PHONY: temporal_splits
 temporal_splits:
 	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/temporal_splits.py \
 		--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
-		--data-path ./data/processed
+		--data-path ./data/processed \
+		2>&1 | tee ./data/processed/temporal_splits.txt
 
 .PHONY: data_prep_preprocessing_training
 data_prep_preprocessing_training:
 	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/preprocessing.py \
-	--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
-	--output-data-file ./data/processed/df_sans_zero_missing.parquet \
-	--stage training \
-	--data-path ./data/processed
+		--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
+		--output-data-file ./data/processed/df_sans_zero_missing.parquet \
+		--stage training \
+		--data-path ./data/processed \
+		2>&1 | tee ./data/processed/data_prep_preprocessing_training.txt
 
 .PHONY: build_text_base
 build_text_base:
 	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/build_text_base.py \
 		--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
-		--output-data-file ./data/processed/text_base.parquet
+		--output-data-file ./data/processed/text_base.parquet \
+		2>&1 | tee ./data/processed/build_text_base.txt
 
 .PHONY: build_text_embeddings
 build_text_embeddings:
 	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/build_text_embeddings.py \
 		--input-data-file ./data/processed/text_base.parquet \
-		--output-data-file ./data/processed/text_embeddings.parquet
+		--output-data-file ./data/processed/text_embeddings.parquet \
+		2>&1 | tee ./data/processed/build_text_embeddings.txt
 
 .PHONY: remove_notes_leakage
 remove_notes_leakage:
 	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/remove_notes_leakage.py \
 		--input-file ./data/processed/text_base.parquet \
-		--output-file ./data/processed/text_base_no_leakage.parquet
+		--output-file ./data/processed/text_base_no_leakage.parquet \
+		2>&1 | tee ./data/processed/remove_notes_leakage.txt
 
 .PHONY: feat_gen_training
 feat_gen_training:
 	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/feat_gen.py \
-	--input-data-file ./data/processed/df_sans_zero_missing.parquet \
-	--stage training \
-	--data-path ./data/processed
+		--input-data-file ./data/processed/df_sans_zero_missing.parquet \
+		--stage training \
+		--data-path ./data/processed \
+		2>&1 | tee ./data/processed/feat_gen_training.txt
 
 
 preproc_pipeline: data_gen temporal_splits data_prep_preprocessing_training  \
-				  feat_gen_training 
-				  
+				  feat_gen_training
 
 ################################################################################
 ################################# Training #####################################
@@ -293,8 +297,8 @@ train_cat:
 		done; \
 	done
 
-train_all_models: train_lr train_lasso train_xgb train_cat
-
+# train_all_models: train_lr train_lasso train_xgb train_cat
+train_all_models: train_lr train_lasso
 ################################################################################
 ############################### Model Evaluation ###############################
 ################################################################################
@@ -359,7 +363,8 @@ eval_cat:
 		done; \
 	done
 	
-eval_all_models: eval_lr eval_lasso eval_xgb eval_cat
+# eval_all_models: eval_lr eval_lasso eval_xgb eval_cat
+eval_all_models: eval_lr eval_lasso 
 
 
 ################################ Modeling Pipeline #############################

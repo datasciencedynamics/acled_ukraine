@@ -33,6 +33,10 @@ app = typer.Typer()
 ################ Step 3: Define Main Function ##################################
 ################################################################################
 
+print("\n" + "#" * 80)
+print(f"Running script: {os.path.basename(__file__)}")
+print("#" * 80 + "\n")
+
 
 @app.command()
 def main(
@@ -123,6 +127,7 @@ def main(
         X_train = X_train[cols_to_keep]
         X_columns_list = X_train.columns.to_list()
 
+        print(f"\nX_columns_list: {X_columns_list}")
         print(f"\nX_train shape: {X_train.shape}")
         print(f"Number of features: {len(X_columns_list)}")
         print(f"\nFirst 5 feature names: {X_columns_list[:5]}")
