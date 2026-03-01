@@ -128,33 +128,6 @@ def clean_feature_selection_params(pipeline_steps, tuned_parameters):
                 del tuned_parameters[0][key]
 
 
-def to_str_func(X):
-    # Convert categorical values to strings.
-    # CatBoost can consume string categories directly, and this ensures
-    # consistent dtype handling after imputation.
-    return X.astype(str)
-
-    # IMPORTANT:
-    # ColumnTransformer.get_feature_names_out() requires every
-    # transformer in the pipeline to implement feature name
-    # propagation. FunctionTransformer does not provide this
-    # by default, which causes:
-    #
-    # AttributeError:
-    #   Estimator to_str does not provide get_feature_names_out
-    #
-    # Setting feature_names_out="one-to-one" tells sklearn that:
-    #
-    #   • output columns == input columns
-    #   • no columns are added, removed, or renamed
-    #
-    # This enables safe feature lineage tracking and allows:
-    #
-    #   pipeline.get_feature_names_out()
-    #
-    # to work correctly.
-
-
 def get_cat_feature_indices(preprocessor, num_cols, cat_cols):
     """
     Return categorical feature indices AFTER ColumnTransformer.
@@ -165,6 +138,13 @@ def get_cat_feature_indices(preprocessor, num_cols, cat_cols):
         return []
 
     return list(range(len(num_cols), len(num_cols) + len(cat_cols)))
+
+
+def to_str_func(X):
+    # Convert categorical values to strings.
+    # CatBoost can consume string categories directly, and this ensures
+    # consistent dtype handling after imputation.
+    return X.astype(str)
 
 
 def adjust_preprocessing_pipeline(
@@ -187,7 +167,7 @@ def adjust_preprocessing_pipeline(
                 steps=[
                     (
                         "imputer",
-                        SimpleImputer(strategy="constant", fill_value="__MISSING__"),
+                        SimpleImputer(strategy="constant", fill_value="missing"),
                     ),
                     (
                         "encoder",
@@ -238,10 +218,7 @@ def adjust_preprocessing_pipeline(
             remainder="passthrough",
         )
 
-        # set_output("pandas") preserves category dtype through ColumnTransformer
-        # so XGBoost receives a DataFrame with proper category columns intact
-        # rather than a numpy object array where dtype info is lost
-        if model_type == "xgb" and not has_rfe and not use_smote:
+        if model_type in {"xgb"} and not has_rfe and not use_smote:
             adjusted_preprocessor.set_output(transform="pandas")
 
         return [
@@ -1779,7 +1756,7 @@ def create_shap_plots(
     # --------------------------------------------------------------
     # STEP 1: Extract the actual estimator from wrapper
     # --------------------------------------------------------------
-    print("\n[1/6] Extracting estimator from wrapper...")
+    print("\n[1/9] Extracting estimator from wrapper...")
 
     fitted_pipeline = model.estimator
     estimator = fitted_pipeline.steps[-1][1]
@@ -1789,7 +1766,7 @@ def create_shap_plots(
     # --------------------------------------------------------------
     # STEP 2: Transform training data through preprocessing pipeline
     # --------------------------------------------------------------
-    print("\n[2/6] Transforming data through preprocessing pipeline...")
+    print("\n[2/9] Transforming data through preprocessing pipeline...")
 
     preprocessing_steps = fitted_pipeline.steps[:-1]
 
@@ -1807,7 +1784,7 @@ def create_shap_plots(
     # --------------------------------------------------------------
     # STEP 3: Create SHAP Explainer based on model type
     # --------------------------------------------------------------
-    print("\n[3/6] Creating SHAP Explainer...")
+    print("\n[3/9] Creating SHAP Explainer...")
 
     tree_based = any(
         name in estimator_type.lower()
@@ -1827,7 +1804,7 @@ def create_shap_plots(
     # --------------------------------------------------------------
     # STEP 4: Calculate SHAP Values on Test Set
     # --------------------------------------------------------------
-    print(f"\n[4/6] Calculating SHAP values for {sample_size} test samples...")
+    print(f"\n[4/9] Calculating SHAP values for {sample_size} test samples...")
 
     if X_test_transformed.shape[0] > sample_size:
         sample_indices = np.random.choice(
@@ -1843,7 +1820,10 @@ def create_shap_plots(
         y_sample = y_test
 
     # Calculate SHAP values
-    shap_values = explainer.shap_values(X_sample)
+    if tree_based:
+        shap_values = explainer.shap_values(X_sample, check_additivity=False)
+    else:
+        shap_values = explainer.shap_values(X_sample)
 
     print(f"SHAP values shape: {shap_values.shape}")
 
@@ -1879,7 +1859,7 @@ def create_shap_plots(
     # --------------------------------------------------------------
     # STEP 5: Summary Plot (Bar) - Feature Importance
     # --------------------------------------------------------------
-    print(f"\n[5/6] Creating feature importance plot...")
+    print(f"\n[5/9] Creating feature importance plot...")
 
     fig_importance = plt.figure(figsize=(10, 8))
     shap.summary_plot(
@@ -1902,7 +1882,7 @@ def create_shap_plots(
     # --------------------------------------------------------------
     # STEP 6: Summary Plot (Beeswarm) - Feature Effects
     # --------------------------------------------------------------
-    print(f"\n[6/6] Creating beeswarm plot...")
+    print(f"\n[6/9] Creating beeswarm plot...")
 
     fig_beeswarm = plt.figure(figsize=(10, 8))
     shap.summary_plot(
@@ -1922,9 +1902,93 @@ def create_shap_plots(
     print(f"Saved: {output_dir}/shap_beeswarm.png")
 
     # --------------------------------------------------------------
-    # STEP 7: Feature Importance DataFrame
+    # STEP 7: Expanded Category-Level Beeswarm
     # --------------------------------------------------------------
-    print(f"\n[7/7] Creating feature importance table...")
+    # For models using native categorical support (e.g. XGBoost with
+    # enable_categorical=True), SHAP returns one value per categorical
+    # column. This step explodes that single value into per-category-
+    # level rows: for each sample, the SHAP value is assigned to the
+    # active category level and zeroed out for all others. This allows
+    # the beeswarm and bar plots to show which specific category levels
+    # (e.g. admin1=Donetsk, sub_event_type=Shelling) drive predictions.
+    # --------------------------------------------------------------
+    print(f"\n[7/9] Creating expanded category-level beeswarm plot...")
+
+    cat_features = [c for c in feature_names if c.startswith("cat__")]
+    num_features = [c for c in feature_names if c.startswith("num__")]
+
+    shap_df = pd.DataFrame(shap_values, columns=feature_names)
+    X_sample_df = pd.DataFrame(
+        X_sample.values if hasattr(X_sample, "values") else X_sample,
+        columns=feature_names,
+    )
+
+    exploded_shap = pd.DataFrame()
+    exploded_features = pd.DataFrame()
+
+    for col in cat_features:
+        categories = X_sample_df[col].astype(str).values
+        shap_vals = shap_df[col].values
+        for cat in np.unique(categories):
+            mask = categories == cat
+            col_name = f"{col} = {cat}"
+            exploded_shap[col_name] = np.where(mask, shap_vals, 0)
+            exploded_features[col_name] = mask.astype(float)
+
+    for col in num_features:
+        exploded_shap[col] = shap_df[col].values
+        exploded_features[col] = X_sample_df[col].values
+
+    mean_abs = exploded_shap.abs().mean().sort_values(ascending=False)
+    top_cols = mean_abs.head(max_display).index.tolist()
+
+    shap_explanation = shap.Explanation(
+        values=exploded_shap[top_cols].values,
+        data=exploded_features[top_cols].values,
+        feature_names=top_cols,
+    )
+
+    fig_beeswarm_expanded = plt.figure(figsize=(12, 10))
+    shap.plots.beeswarm(shap_explanation, max_display=max_display, show=False)
+    plt.title(
+        "SHAP Summary Plot — Category-Level Drill-Down",
+        fontsize=14,
+        fontweight="bold",
+    )
+    plt.tight_layout()
+
+    plt.savefig(output_dir / "shap_beeswarm_expanded.png", dpi=300, bbox_inches="tight")
+    plt.savefig(output_dir / "shap_beeswarm_expanded.svg", bbox_inches="tight")
+
+    figures["shap_beeswarm_expanded"] = fig_beeswarm_expanded
+    print(f"Saved: {output_dir}/shap_beeswarm_expanded.png")
+
+    # --------------------------------------------------------------
+    # STEP 8: Expanded Category-Level Importance (Bar)
+    # --------------------------------------------------------------
+    print(f"\n[8/9] Creating expanded category-level importance plot...")
+
+    fig_importance_expanded = plt.figure(figsize=(12, 10))
+    shap.plots.bar(shap_explanation, max_display=max_display, show=False)
+    plt.title(
+        "SHAP Feature Importance — Category-Level Drill-Down",
+        fontsize=14,
+        fontweight="bold",
+    )
+    plt.tight_layout()
+
+    plt.savefig(
+        output_dir / "shap_importance_expanded.png", dpi=300, bbox_inches="tight"
+    )
+    plt.savefig(output_dir / "shap_importance_expanded.svg", bbox_inches="tight")
+
+    figures["shap_importance_expanded"] = fig_importance_expanded
+    print(f"Saved: {output_dir}/shap_importance_expanded.png")
+
+    # --------------------------------------------------------------
+    # STEP 9: Feature Importance DataFrame
+    # --------------------------------------------------------------
+    print(f"\n[9/9] Creating feature importance table...")
 
     feature_importance_df = pd.DataFrame(
         {
@@ -1939,8 +2003,23 @@ def create_shap_plots(
         output_dir / "shap_feature_importance.csv", index=False
     )
 
-    print("\nTop 10 Most Important Features:")
+    # Also save expanded importance table
+    expanded_importance_df = pd.DataFrame(
+        {
+            "feature": mean_abs.index,
+            "abs_mean_shap": mean_abs.values,
+        }
+    ).sort_values("abs_mean_shap", ascending=False)
+
+    expanded_importance_df.to_csv(
+        output_dir / "shap_feature_importance_expanded.csv", index=False
+    )
+
+    print("\nTop 10 Most Important Features (Collapsed):")
     print(feature_importance_df.head(10).to_string(index=False))
+
+    print("\nTop 10 Most Important Features (Expanded):")
+    print(expanded_importance_df.head(10).to_string(index=False))
 
     print("\n" + "=" * 80)
     print("SHAP ANALYSIS COMPLETE")
@@ -1948,7 +2027,10 @@ def create_shap_plots(
     print(f"\nGenerated files in {output_dir}:")
     print("  - shap_importance.png/svg - Feature importance (bar chart)")
     print("  - shap_beeswarm.png/svg - Feature effects (beeswarm)")
+    print("  - shap_beeswarm_expanded.png/svg - Category-level beeswarm")
+    print("  - shap_importance_expanded.png/svg - Category-level importance")
     print("  - shap_feature_importance.csv - Feature importance table")
+    print("  - shap_feature_importance_expanded.csv - Expanded importance table")
 
     return shap_values, feature_importance_df, figures
 
@@ -1961,6 +2043,20 @@ def adjusted_r2(r2: float, n: int, p: int) -> float:
     if n <= p + 1:
         return float("nan")
     return 1 - (1 - r2) * (n - 1) / (n - p - 1)
+
+
+############################## Haversine Distance ##############################
+
+
+def haversine_km(lat, lon, ref_lat, ref_lon):
+    R = 6371
+    dlat = np.radians(lat - ref_lat)
+    dlon = np.radians(lon - ref_lon)
+    a = (
+        np.sin(dlat / 2) ** 2
+        + np.cos(np.radians(ref_lat)) * np.cos(np.radians(lat)) * np.sin(dlon / 2) ** 2
+    )
+    return R * 2 * np.arcsin(np.sqrt(a))
 
 
 ################################ End of functions.py ###########################

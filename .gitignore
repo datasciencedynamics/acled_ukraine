@@ -153,6 +153,7 @@ structured_data_regressor/
 catboost_info/
 mlruns/
 Images/
+images/
 --stdin*/
 
 # Ignore parquet files
@@ -172,3 +173,5 @@ Images/
 # Ignore images
 images/.DS_Store
 notebooks/*.png
+notebooks/*.tiff
+**/images/

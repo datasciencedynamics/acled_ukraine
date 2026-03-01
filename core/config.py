@@ -80,6 +80,7 @@ categorical_cols = [
     "interaction",
     "source_scale",
     "geo_precision",
+    "time_precision",
 ]
 
 # Load feature column names from Mlflow
@@ -247,7 +248,6 @@ lasso_definition = {
 
 # Estimator name prefix for use in GridSearchCV or similar tools
 xgb_name = "xgb"
-
 xgb = XGBRegressor(
     objective="reg:squarederror",
     random_state=rstate,
@@ -258,17 +258,40 @@ xgb = XGBRegressor(
 )
 
 # Define the hyperparameters for XGBoost
-xgb_learning_rates = [0.01]  # Learning rate or eta
-xgb_n_estimators = [10000]  # Number of trees. Equivalent to n_estimators in GB
-xgb_max_depths = [3, 5, 7]  # Maximum depth of the trees
-xgb_subsamples = [0.8, 1.0]  # Subsample ratio of the training instances
-xgb_colsample_bytree = [0.8, 1.0]
+# Added lower LR for smoother learning & subtle signal capture
+xgb_learning_rates = [0.005, 0.01, 0.03, 0.05, 0.1]  # Learning rate or eta
+
+#  Expanded to allow convergence when LR is small
+xgb_n_estimators = [
+    500,
+    1000,
+    2000,
+    5000,
+    10000,  # helps very low learning rates converge
+]  # Number of trees. Equivalent to n_estimators in GB
+
+xgb_max_depths = [3, 5, 7, 9]  # Maximum depth of the trees
+
+xgb_subsamples = [0.6, 0.8, 1.0]  # Subsample ratio of the training instances
+
+xgb_colsample_bytree = [0.6, 0.8, 1.0]
+xgb_colsample_bylevel = [0.6, 0.8, 1.0]
+
+# Added split-quality controls to reduce noisy splits & improve generalization
+xgb_min_child_weight = [1, 3, 5, 10]
+xgb_gamma = [0, 0.1, 1]
+
 xgb_alpha = [0, 0.1, 1, 10]  # L1 regularization (alpha)
 xgb_lambda = [0, 0.1, 10, 100]  # L2 regularization (lambda)
-xgb_eval_metric = ["rmse"]  # check out "aucpr"
-xgb_early_stopping_rounds = [3]
+
+xgb_eval_metric = ["rmse"]
+
+# Early stopping must scale with smaller learning rates
+xgb_early_stopping_rounds = [100, 200]
+
 xgb_verbose = [0]
 # Subsample ratio of columns when constructing each tree
+
 
 # Combining the hyperparameters in a dictionary
 xgb_parameters = [
@@ -280,9 +303,15 @@ xgb_parameters = [
         "xgb__alpha": xgb_alpha,  # L1 regularization (alpha)
         "xgb__lambda": xgb_lambda,  # L2 regularization (lambda)
         "xgb__colsample_bytree": xgb_colsample_bytree,
+        "xgb__colsample_bylevel": xgb_colsample_bylevel,
+        #  Added controls for split stability & overfitting
+        "xgb__min_child_weight": xgb_min_child_weight,
+        "xgb__gamma": xgb_gamma,
         "xgb__eval_metric": xgb_eval_metric,
         "xgb__early_stopping_rounds": xgb_early_stopping_rounds,
         "xgb__verbose": xgb_verbose,
+        #  Retained RFE grid but emphasized full-feature option
+        #   (boosted trees often benefit from retaining weaker features)
         "feature_selection_RFE__n_features_to_select": [10, 0.1, 0.5, 0.7, 1.0],
     }
 ]
@@ -292,13 +321,55 @@ xgb_definition = {
     "estimator_name": xgb_name,
     "tuned_parameters": xgb_parameters,
     "randomized_grid": True,
-    "n_iter": 3,
-    "early": True,
+    "n_iter": 50,
+    "early": True,  # ensure eval_set is passed during fit
 }
-
 ################################################################################
 ############################# CatBoost Regressor ###############################
 ################################################################################
+
+# cat_name = "cat"
+
+# cat = CatBoostRegressor(
+#     task_type="CPU",
+#     random_state=rstate,
+#     eval_metric="RMSE",
+# )
+
+# # Define the hyperparameters for CatBoost
+# cat_depths = [4, 6, 8, 10]  # Depth of the trees
+# cat_learning_rates = [0.01]  # Learning rate
+# cat_l2_leaf_regs = [3, 10, 100]  # L2 regularization
+# cat_bagging_temperatures = [0, 0.5, 1]  # Bagging temperature
+# cat_n_estimators = [10000]  # Number of trees
+# cat_early_stopping_rounds = [3]  # Early stopping rounds
+# cat_random_strengths = [1, 10]  # Random strength for feature score randomness
+# cat_verbose = [0]  # Verbosity level
+# cat_n_features_to_select = [10, 0.1, 0.5, 0.7, 1.0]  # Features to select for RFE
+
+# # Combining the hyperparameters in a dictionary
+# cat_parameters = [
+#     {
+#         "cat__depth": cat_depths,
+#         "cat__learning_rate": cat_learning_rates,
+#         "cat__l2_leaf_reg": cat_l2_leaf_regs,
+#         "cat__bagging_temperature": cat_bagging_temperatures,
+#         "cat__n_estimators": cat_n_estimators,
+#         "cat__early_stopping_rounds": cat_early_stopping_rounds,
+#         "cat__random_strength": cat_random_strengths,
+#         "cat__verbose": cat_verbose,
+#         "feature_selection_RFE__n_features_to_select": cat_n_features_to_select,
+#     }
+# ]
+
+# cat_definition = {
+#     "clc": cat,
+#     "estimator_name": cat_name,
+#     "tuned_parameters": cat_parameters,
+#     "randomized_grid": True,
+#     "n_iter": 1,
+#     "early": True,
+# }
 
 cat_name = "cat"
 
@@ -306,29 +377,55 @@ cat = CatBoostRegressor(
     task_type="CPU",
     random_state=rstate,
     eval_metric="RMSE",
+    bootstrap_type="Bernoulli",  # required when using subsample
 )
 
+# =========================================================
 # Define the hyperparameters for CatBoost
-cat_depths = [4, 6, 8, 10]  # Depth of the trees
-cat_learning_rates = [0.01]  # Learning rate
-cat_l2_leaf_regs = [3, 10, 100]  # L2 regularization
-cat_bagging_temperatures = [0, 0.5, 1]  # Bagging temperature
-cat_n_estimators = [10000]  # Number of trees
-cat_early_stopping_rounds = [3]  # Early stopping rounds
-cat_random_strengths = [1, 10]  # Random strength for feature score randomness
-cat_verbose = [0]  # Verbosity level
-cat_n_features_to_select = [10, 0.1, 0.5, 0.7, 1.0]  # Features to select for RFE
+# =========================================================
 
-# Combining the hyperparameters in a dictionary
+cat_depths = [4, 6, 8, 10]  # deeper trees did not improve generalization
+
+cat_learning_rates = [
+    0.02,
+    0.03,
+    0.05,
+]  # CatBoost often performs best in this range
+
+cat_l2_leaf_regs = [3, 10, 30, 100]  # L2 regularization strength
+
+cat_n_estimators = [3000, 6000, 10000]  # allow convergence at lower learning rates
+
+cat_early_stopping_rounds = [75, 150]  # scaled for estimator counts
+
+cat_subsample = [0.7, 0.8, 1.0]  # improves generalization
+
+# reduce noisy leaf splits without suppressing signal
+cat_min_data_in_leaf = [5, 10]
+
+# Newton improves regression leaf estimation stability
+cat_leaf_estimation_methods = ["Newton"]
+
+cat_verbose = [0]  # verbosity level
+
+# retain RFE options but ensure full-feature baseline
+cat_n_features_to_select = [10, 0.1, 0.5, 0.7, 1.0]
+
+
+# =========================================================
+# Combine parameters
+# =========================================================
+
 cat_parameters = [
     {
         "cat__depth": cat_depths,
         "cat__learning_rate": cat_learning_rates,
         "cat__l2_leaf_reg": cat_l2_leaf_regs,
-        "cat__bagging_temperature": cat_bagging_temperatures,
         "cat__n_estimators": cat_n_estimators,
         "cat__early_stopping_rounds": cat_early_stopping_rounds,
-        "cat__random_strength": cat_random_strengths,
+        "cat__subsample": cat_subsample,
+        "cat__min_data_in_leaf": cat_min_data_in_leaf,
+        "cat__leaf_estimation_method": cat_leaf_estimation_methods,
         "cat__verbose": cat_verbose,
         "feature_selection_RFE__n_features_to_select": cat_n_features_to_select,
     }
@@ -339,10 +436,9 @@ cat_definition = {
     "estimator_name": cat_name,
     "tuned_parameters": cat_parameters,
     "randomized_grid": True,
-    "n_iter": 1,
+    "n_iter": 50,
     "early": True,
 }
-
 
 model_definitions = {
     lr_name: lr_definition,

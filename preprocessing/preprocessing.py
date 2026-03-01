@@ -3,6 +3,7 @@
 import os
 import typer
 import pandas as pd
+import numpy as np
 
 # from node2vec import Node2Vec  # COMMENTED OUT: No longer using embeddings
 
@@ -16,7 +17,6 @@ from core.constants import (
     preproc_run_name,
     exp_artifact_name,
     percent_miss,
-    seed,
     drop_vars,
 )
 
@@ -24,7 +24,7 @@ from core.constants import (
 from core.functions import (
     mlflow_dumpArtifact,
     mlflow_loadArtifact,
-    normalize_split,
+    haversine_km,
     safe_to_numeric,
     # build_actor_interaction_graph,  # COMMENTED OUT: No longer using embeddings
     # add_pairwise_embedding_features,  # COMMENTED OUT: No longer using embeddings
@@ -32,6 +32,10 @@ from core.functions import (
 )
 
 app = typer.Typer()
+
+print("\n" + "#" * 80)
+print(f"Running script: {os.path.basename(__file__)}")
+print("#" * 80 + "\n")
 
 
 @app.command()
@@ -359,6 +363,57 @@ def main(
 
             # ensure string dtype for encoder safety
             _df["admin1"] = _df["admin1"].astype(str)
+
+    ############################################################################
+    # Step 11b. Days Since Invasion Feature
+    ############################################################################
+    # Compute the number of days between each event and the start of the
+    # full-scale Russian invasion (2022-02-24). This gives the model a
+    # monotonic temporal signal without requiring the raw date column.
+    ############################################################################
+
+    INVASION_DATE = pd.Timestamp("2022-02-24")
+
+    for _df in (train_df, valid_df, test_df):
+        if "event_date" in _df.columns:
+            _df["days_since_invasion"] = (
+                pd.to_datetime(_df["event_date"]) - INVASION_DATE
+            ).dt.days
+
+    # ############################################################################
+    # # Step 11c. Distance to Kyiv Feature
+    # ############################################################################
+    # # Compute the great-circle (haversine) distance in km from each event's
+    # # coordinates to Kyiv (50.4501, 30.5234).
+    # #
+    # # Why haversine over Euclidean:
+    # #   Euclidean distance on raw lat/lon is distorted because one degree of
+    # #   longitude shrinks with latitude (cos(lat) factor). Ukraine spans
+    # #   roughly 44–52°N, so this distortion is non-trivial. Haversine
+    # #   accounts for Earth's curvature and returns true surface distance in
+    # #   km, giving the model a physically meaningful and unit-consistent
+    # #   measure regardless of where in Ukraine the event occurs.
+    # #
+    # # Why distance to Kyiv matters:
+    # #   Kyiv is the political and military command centre of Ukraine.
+    # #   Proximity to the capital correlates with strategic importance,
+    # #   defensive investment, force concentration, and media/reporting
+    # #   density — all of which influence fatality outcomes. While raw
+    # #   lat/lon are available, the model would need to learn this radial
+    # #   relationship implicitly; providing it as an explicit feature
+    # #   reduces the learning burden and improves interpretability, since
+    # #   a SHAP value on dist_to_kyiv_km is directly explainable as
+    # #   "events closer to / farther from the capital tend to have
+    # #   higher/lower predicted fatalities."
+    # ############################################################################
+
+    # KYIV_LAT, KYIV_LON = 50.4501, 30.5234
+
+    # for _df in (train_df, valid_df, test_df):
+    #     if "latitude" in _df.columns and "longitude" in _df.columns:
+    #         _df["dist_to_kyiv_km"] = haversine_km(
+    #             _df["latitude"], _df["longitude"], KYIV_LAT, KYIV_LON
+    #         )
 
     ############################################################################
     # Step 12. Drop Intermediate and Redundant Columns
