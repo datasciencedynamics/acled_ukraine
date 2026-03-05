@@ -150,12 +150,13 @@ clean_dir:
 create_folders:
 # Create data subdirectories
 	mkdir -p data/external data/interim data/processed data/raw data/processed/inference
-	mkdir -p "$(PROJECT_NAME)/modeling" "$(PROJECT_NAME)/preprocessing"
+	mkdir -p modeling
+	mkdir -p preprocessing
 	touch data/interim/.gitkeep
 	touch data/processed/.gitkeep
 	touch data/processed/inference/.gitkeep
-	touch "$(PROJECT_NAME)/modeling/__init__.py"
-	touch "$(PROJECT_NAME)/preprocessing/__init__.py"
+	touch modeling/__init__.py
+	touch preprocessing/__init__.py
 
 # Create models subdirectories for each outcome
 	@for outcome in $(OUTCOMES); do \
@@ -381,38 +382,27 @@ model_explainer:
 	@for outcome in $(EXPLAN_OUTCOME); do \
 		$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/modeling/explainer.py \
 			--outcome $$outcome \
-			--metric-name "valid Average Precision" \
-			--mode max; \
+			--metric-name "valid_r2" \
+			--mode max \
+			2>&1 | tee ./data/processed/model_explainer_$$outcome.txt; \
 	done
 
 .PHONY: model_explanations_training
 model_explanations_training:
 	@for outcome in $(EXPLAN_OUTCOME); do \
 		$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/modeling/explanations_training.py \
-			--features-path ./data/processed/X.parquet \
-			--labels-path ./data/processed/y_$$outcome.parquet \
+			--features-path ./data/processed/X_test.parquet \
 			--outcome $$outcome \
-			--metric-name "valid Average Precision" \
+			--metric-name "valid_r2" \
 			--mode max \
 			--top-n 5 \
 			--shap-val-flag 1 \
-			--explanations-path ./data/processed/shap_predictions_$$outcome.csv; \
+			--explanations-path ./data/processed/shap_predictions_$$outcome.csv \
+			2>&1 | tee ./data/processed/model_explanations_training_$$outcome.txt; \
 	done
 
 model_explaining_training: model_explainer model_explanations_training
 
-.PHONY: model_explanations_inference
-model_explanations_inference:
-	@for outcome in $(EXPLAN_OUTCOME); do \
-		$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/modeling/explanations_inference.py \
-			--features-path ./data/processed/inference/X.parquet \
-			--outcome $$outcome \
-			--metric-name "valid Average Precision" \
-			--mode max \
-			--top-n 5 \
-			--shap-val-flag 1 \
-			--explanations-path ./data/processed/inference/shap_predictions_$$outcome.csv; \
-	done
 
 ################################################################################
 ################################# Production ###################################
@@ -422,17 +412,19 @@ model_explanations_inference:
 .PHONY: data_prep_preprocessing_inference
 data_prep_preprocessing_inference:
 	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/preprocessing.py \
-	--input-data-file ./data/raw/df.parquet \
-	--output-data-file ./data/processed/inference/df_inference_process.parquet \
-	--stage inference \
-	--data-path ./data/processed
+		--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
+		--output-data-file ./data/processed/inference/df_inference_process.parquet \
+		--stage inference \
+		--data-path ./data/processed \
+		2>&1 | tee ./data/processed/inference/data_prep_preprocessing_inference.txt
 
 .PHONY: feat_gen_inference
-feat_gen_inference: 
+feat_gen_inference:
 	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/feat_gen.py \
-	--input-data-file ./data/processed/inference/df_inference_process.parquet \
-	--stage inference \
-	--data-path ./data/processed/inference
+		--input-data-file ./data/processed/inference/df_inference_process.parquet \
+		--stage inference \
+		--data-path ./data/processed/inference \
+		2>&1 | tee ./data/processed/inference/feat_gen_inference.txt
 
 .PHONY: predict
 predict:
@@ -441,16 +433,38 @@ predict:
 			--input-data-file data/processed/inference/X.parquet \
 			--predictions-path ./data/processed/inference/predictions_$$outcome.csv \
 			--outcome $$outcome \
-			--metric-name "valid Average Precision" \
+			--metric-name "valid_r2" \
+			--mode max \
+			2>&1 | tee ./data/processed/inference/predict_$$outcome.txt; \
+	done
+
+.PHONY: model_explainer_inference
+model_explainer_inference:
+	@for outcome in $(EXPLAN_OUTCOME); do \
+		$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/modeling/explainer.py \
+			--outcome $$outcome \
+			--metric-name "valid_r2" \
 			--mode max; \
 	done
 
-
-################################################################################
-###################### Preprocessing (+) Inference Pipeline ####################
-################################################################################
-.PHONY: preproc_pipeline_inf
-preproc_pipeline_inf: data_prep_preprocessing_inference feat_gen_inference
+.PHONY: model_explanations_inference
+model_explanations_inference:
+	@for outcome in $(EXPLAN_OUTCOME); do \
+		$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/modeling/explanations_inference.py \
+			--features-path ./data/processed/inference/X.parquet \
+			--outcome $$outcome \
+			--metric-name "test_r2" \
+			--mode max \
+			--top-n 5 \
+			--shap-val-flag 1 \
+			--explanations-path ./data/processed/inference/shap_predictions_$$outcome.csv \
+			2>&1 | tee ./data/processed/inference/model_explanations_$$outcome.txt; \
+	done
+preproc_pipeline_inference: data_prep_preprocessing_inference \
+    feat_gen_inference \
+    predict \
+	model_explainer_inference \
+    model_explanations_inference
 #################################################################################
 # Self Documenting Commands                                                     #
 #################################################################################

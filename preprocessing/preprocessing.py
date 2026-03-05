@@ -24,7 +24,6 @@ from core.constants import (
 from core.functions import (
     mlflow_dumpArtifact,
     mlflow_loadArtifact,
-    haversine_km,
     safe_to_numeric,
     # build_actor_interaction_graph,  # COMMENTED OUT: No longer using embeddings
     # add_pairwise_embedding_features,  # COMMENTED OUT: No longer using embeddings
@@ -57,37 +56,42 @@ def main(
     ############################################################################
     # Step 1. Read the input data file
     ############################################################################
-    # IMPORTANT UPDATE:
-    # We do NOT build embeddings from the full raw dataframe anymore.
-    # We load the temporal splits created by temporal_splits.py, then:
-    #   1) Build the actor graph ONLY from train_df (prevents temporal leakage)
-    #   2) Train Node2Vec embeddings on that training graph
-    #   3) Apply the learned embeddings to train, valid, and test splits
+    # During training, we load the three temporal splits created by
+    # temporal_splits.py. During inference, we load a single input file
+    # and process it through the same pipeline.
     #
     # UPDATE 2026-02-16: EMBEDDINGS COMMENTED OUT FOR INTERPRETABILITY
     ############################################################################
 
-    train_path = os.path.join(data_path, "train_df.parquet")
-    valid_path = os.path.join(data_path, "valid_df.parquet")
-    test_path = os.path.join(data_path, "test_df.parquet")
+    if stage == "training":
+        train_path = os.path.join(data_path, "train_df.parquet")
+        valid_path = os.path.join(data_path, "valid_df.parquet")
+        test_path = os.path.join(data_path, "test_df.parquet")
 
-    if (
-        os.path.exists(train_path)
-        and os.path.exists(valid_path)
-        and os.path.exists(test_path)
-    ):
-        print("Loading temporal splits...")
-        train_df = pd.read_parquet(train_path)
-        valid_df = pd.read_parquet(valid_path)
-        test_df = pd.read_parquet(test_path)
-    else:
-        raise FileNotFoundError(
-            "Temporal splits not found. Run temporal_splits.py first "
-            "to create train_df.parquet, valid_df.parquet, test_df.parquet."
-        )
+        if (
+            os.path.exists(train_path)
+            and os.path.exists(valid_path)
+            and os.path.exists(test_path)
+        ):
+            print("Loading temporal splits...")
+            train_df = pd.read_parquet(train_path)
+            valid_df = pd.read_parquet(valid_path)
+            test_df = pd.read_parquet(test_path)
+        else:
+            raise FileNotFoundError(
+                "Temporal splits not found. Run temporal_splits.py first "
+                "to create train_df.parquet, valid_df.parquet, test_df.parquet."
+            )
+
+        all_dfs = [("train", train_df), ("valid", valid_df), ("test", test_df)]
+
+    if stage == "inference":
+        print("Loading inference data...")
+        infer_df = pd.read_parquet(input_data_file)
+        all_dfs = [("inference", infer_df)]
 
     # Set index if needed (on each split)
-    for _name, _df in [("train", train_df), ("valid", valid_df), ("test", test_df)]:
+    for _name, _df in all_dfs:
         try:
             _df.set_index(var_index, inplace=True)
         except Exception:
@@ -95,13 +99,13 @@ def main(
                 f"({_name}) Index already set or '{var_index}' doesn't exist in dataframe"
             )
 
-    print(f"Train Data Shape: {train_df.shape}")
-    print(f"Valid Data Shape: {valid_df.shape}")
-    print(f"Test Data Shape:  {test_df.shape}")
+    for _name, _df in all_dfs:
+        print(f"{_name.capitalize()} Data Shape: {_df.shape}")
 
-    print(
-        f"There are {train_df.index.unique().shape[0]} unique indices in the TRAIN dataframe."
-    )
+    if stage == "training":
+        print(
+            f"There are {train_df.index.unique().shape[0]} unique indices in the TRAIN dataframe."
+        )
 
     ############################################################################
     # Step 2. String Columns Handling
@@ -133,16 +137,16 @@ def main(
         # Extract column names to a list
         string_cols_list = df_object.columns.to_list()
 
-        ############################################################################
+        ########################################################################
         # Step 3. Save and Log String Column List
-        ############################################################################
+        ########################################################################
         # Save the list of string columns for consistency across training and
         # inference and log them in MLflow for reproducibility.
         # This list of string columns is dumped (stored) only to inform of what
         # the string columns are; no further action is taken; we do not need to
         # load this list into production, since it is only there for us to
         # see what the columns are.
-        ############################################################################
+        ########################################################################
 
         # Dump the string_cols_list into a pickle file for future reference
         dumpObjects(
@@ -158,18 +162,18 @@ def main(
             obj=string_cols_list,
         )
 
-        ############################################################################
+        ########################################################################
         # Step 4. Store Unique Actor Lists
-        ############################################################################
-        # Extract unique actor1 and actor2 lists from the dataset and store them
-        # as pickle files for future reference. Additionally, log these lists as
-        # artifacts in MLflow to ensure reproducibility and easy access during
-        # model training and inference.
+        ########################################################################
+        # Extract unique actor1 and actor2 lists from the dataset and store
+        # them as pickle files for future reference. Additionally, log these
+        # lists as artifacts in MLflow to ensure reproducibility and easy
+        # access during model training and inference.
         #
         # IMPORTANT UPDATE:
-        # Store lists from TRAIN only to avoid accidentally recording future-only
-        # actors as part of the "known" set.
-        ############################################################################
+        # Store lists from TRAIN only to avoid accidentally recording
+        # future-only actors as part of the "known" set.
+        ########################################################################
 
         actor1_list = train_df["actor1"].unique().tolist()
         actor2_list = train_df["actor2"].unique().tolist()
@@ -220,16 +224,17 @@ def main(
     # Step 5. Re-encode `civilian_targeting` column to binarized format
     ############################################################################
     # The `civilian_targeting` column is re-encoded to a binary format where
-    # 1 indicates the presence of civilian targeting and 0 indicates its absence.
-    # This transformation simplifies the variable for modeling purposes,
-    # making it easier to interpret and utilize in predictive analyses.
+    # 1 indicates the presence of civilian targeting and 0 indicates its
+    # absence. This transformation simplifies the variable for modeling
+    # purposes, making it easier to interpret and utilize in predictive
+    # analyses.
     #
     # IMPORTANT UPDATE:
-    # Apply transform to EACH split. Use errors-safe approach if column missing.
+    # Apply transform to EACH split/dataframe.
     ############################################################################
 
     to_binary = lambda x: 1 if x == "Civilian targeting" else 0
-    for _df in (train_df, valid_df, test_df):
+    for _name, _df in all_dfs:
         if "civilian_targeting" in _df.columns:
             _df["civilian_targeting"] = _df["civilian_targeting"].apply(to_binary)
 
@@ -237,9 +242,11 @@ def main(
     # Step 6. Backfill missing admin1 using location
     ############################################################################
     # If admin1 is missing or blank, use location as a proxy regional label.
-    # This preserves spatial signal and avoids introducing artificial categories.
+    # This preserves spatial signal and avoids introducing artificial
+    # categories.
+    ############################################################################
 
-    for _df in (train_df, valid_df, test_df):
+    for _name, _df in all_dfs:
         if "admin1" in _df.columns and "location" in _df.columns:
 
             _df["admin1"] = _df["admin1"].replace("", pd.NA).fillna(_df["location"])
@@ -257,7 +264,7 @@ def main(
 
     INVASION_DATE = pd.Timestamp("2022-02-24")
 
-    for _df in (train_df, valid_df, test_df):
+    for _name, _df in all_dfs:
         if "event_date" in _df.columns:
             _df["days_since_invasion"] = (
                 pd.to_datetime(_df["event_date"]) - INVASION_DATE
@@ -271,46 +278,48 @@ def main(
     # for modeling. This step helps in reducing redundancy and improving
     # dataset clarity.
     #
-    # Also drop event_type because sub_event_type is more granular and informative
-    # and `event_date` because it is not needed for regression modeling
-    # The full list of columns to be dropped are contained within `drop_vars`
-    # inside constants.py
-    #
-    # IMPORTANT UPDATE:
-    # Apply drops to EACH split.
+    # Also drop event_type because sub_event_type is more granular and
+    # informative and `event_date` because it is not needed for regression
+    # modeling. The full list of columns to be dropped are contained within
+    # `drop_vars` inside constants.py
     ############################################################################
 
-    for _df in (train_df, valid_df, test_df):
+    for _name, _df in all_dfs:
         _df.drop(columns=drop_vars, errors="ignore", inplace=True)
 
-    ########################################################################
+    ############################################################################
     # Step 8. Ensure Numeric Data and Feature Engineering
-    ########################################################################
+    ############################################################################
     # Convert any possible numeric values that may have been incorrectly
     # classified as non-numeric. This avoids accidental labeling errors.
-    #
-    # IMPORTANT UPDATE:
-    # Apply safe_to_numeric to EACH split.
-    ########################################################################
+    ############################################################################
 
-    train_df = train_df.apply(lambda x: safe_to_numeric(x))
-    valid_df = valid_df.apply(lambda x: safe_to_numeric(x))
-    test_df = test_df.apply(lambda x: safe_to_numeric(x))
+    for i, (_name, _df) in enumerate(all_dfs):
+        all_dfs[i] = (_name, _df.apply(lambda x: safe_to_numeric(x)))
 
-    ################################################################################
+    # Re-bind named references after in-place update
+    if stage == "training":
+        train_df = all_dfs[0][1]
+        valid_df = all_dfs[1][1]
+        test_df = all_dfs[2][1]
+    if stage == "inference":
+        infer_df = all_dfs[0][1]
+
+    ############################################################################
     # Step 9. Zero Variance Columns
-    ################################################################################
-    # Select only numeric columns s/t .var() can be applied since you can only
-    # call this function on numeric columns; otherwise, if you include a mix
-    # (object and numeric), it will throw the following FutureWarning:
+    ############################################################################
+    # Select only numeric columns s/t .var() can be applied since you can
+    # only call this function on numeric columns; otherwise, if you include
+    # a mix (object and numeric), it will throw the following FutureWarning:
     # Dropping of nuisance columns in DataFrame reductions
-    # (with 'numeric_only=None') is deprecated; in a future version this will
-    # raise TypeError.  Select only valid columns before calling the reduction.
+    # (with 'numeric_only=None') is deprecated; in a future version this
+    # will raise TypeError. Select only valid columns before calling the
+    # reduction.
     #
     # IMPORTANT UPDATE:
     # Fit zero-variance columns on TRAIN only, then drop the same columns
     # from VALID and TEST to keep feature space consistent without leakage.
-    ################################################################################
+    ############################################################################
 
     if stage == "training":
         numeric_cols = train_df.select_dtypes(include=["number"]).columns
@@ -341,37 +350,45 @@ def main(
             obj_name="zero_varlist_list",
         )
 
-    # Drop zero-variance columns from each split (errors ignored)
-    train_df = train_df.drop(columns=zero_varlist_list, errors="ignore")
-    valid_df = valid_df.drop(columns=zero_varlist_list, errors="ignore")
-    test_df = test_df.drop(columns=zero_varlist_list, errors="ignore")
+    # Drop zero-variance columns from each dataframe (errors ignored)
+    for i, (_name, _df) in enumerate(all_dfs):
+        all_dfs[i] = (_name, _df.drop(columns=zero_varlist_list, errors="ignore"))
 
-    print(f"Train shape after dropping zero var cols: {train_df.shape}")
-    print(f"Valid shape after dropping zero var cols: {valid_df.shape}")
-    print(f"Test shape after dropping zero var cols:  {test_df.shape}")
+    # Re-bind named references after drop
+    if stage == "training":
+        train_df = all_dfs[0][1]
+        valid_df = all_dfs[1][1]
+        test_df = all_dfs[2][1]
+    if stage == "inference":
+        infer_df = all_dfs[0][1]
+
+    for _name, _df in all_dfs:
+        print(f"{_name.capitalize()} shape after dropping zero var cols: {_df.shape}")
 
     ############################################################################
     # Step 10. Calculate Row-wise Missingness Percentage
     ############################################################################
     # This step computes the proportion of missing values for each row in the
-    # DataFrame. It helps identify rows with a high level of incompleteness, which
-    # may be useful for filtering, imputation strategies, or downstream analysis.
+    # DataFrame. It helps identify rows with a high level of incompleteness,
+    # which may be useful for filtering, imputation strategies, or downstream
+    # analysis.
     #
-    # A new column is added to each split where each value represents
+    # A new column is added to each dataframe where each value represents
     # the percentage of columns that are missing for that row.
     ############################################################################
 
-    for _df in (train_df, valid_df, test_df):
+    for _name, _df in all_dfs:
         _df[percent_miss] = _df.isna().mean(axis=1)
 
     ############################################################################
-    # Step 16 Ensure parquet-safe dtypes
+    # Step 10b. Ensure parquet-safe dtypes
     ############################################################################
     # PyArrow requires consistent column types.
     # Some ACLED admin/location fields may contain mixed types.
     # Convert object columns to string to avoid ArrowTypeError.
+    ############################################################################
 
-    for _df in (train_df, valid_df, test_df):
+    for _name, _df in all_dfs:
         obj_cols = _df.select_dtypes(include="object").columns
         _df[obj_cols] = _df[obj_cols].astype(str)
 
@@ -380,18 +397,24 @@ def main(
     ############################################################################
     ############################################################################
 
-    train_out = os.path.join(data_path, "train.parquet")
-    valid_out = os.path.join(data_path, "valid.parquet")
-    test_out = os.path.join(data_path, "test.parquet")
+    if stage == "training":
+        train_out = os.path.join(data_path, "train.parquet")
+        valid_out = os.path.join(data_path, "valid.parquet")
+        test_out = os.path.join(data_path, "test.parquet")
 
-    train_df.to_parquet(train_out)
-    valid_df.to_parquet(valid_out)
-    test_df.to_parquet(test_out)
+        train_df.to_parquet(train_out)
+        valid_df.to_parquet(valid_out)
+        test_df.to_parquet(test_out)
 
-    print("\nSaved enriched splits (NO EMBEDDINGS - commented out):")
-    print(f"  TRAIN: {train_out}")
-    print(f"  VALID: {valid_out}")
-    print(f"  TEST:  {test_out}")
+        print("\nSaved enriched splits:")
+        print(f"  TRAIN: {train_out}")
+        print(f"  VALID: {valid_out}")
+        print(f"  TEST:  {test_out}")
+
+    if stage == "inference":
+        infer_out = output_data_file
+        infer_df.to_parquet(infer_out)
+        print(f"\nSaved inference output: {infer_out}")
 
 
 if __name__ == "__main__":
