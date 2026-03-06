@@ -309,7 +309,7 @@ def main(
     shap_output_dir = Path("./models/eval") / outcome / estimator_name
     shap_output_dir.mkdir(parents=True, exist_ok=True)
 
-    _, shap_importance, shap_figs = create_shap_plots(
+    shap_importance_expanded, shap_importance, shap_figs = create_shap_plots(
         model=model,
         X_train=X_train,
         X_test=X_test,
@@ -343,7 +343,7 @@ def main(
         )
     print(f"Logged {len(shap_figs)} SHAP SVG plots")
 
-    # Log SHAP importance CSVs (collapsed + expanded)
+    # Log collapsed SHAP importance CSV
     mlflow_dumpArtifact(
         experiment_name=experiment_name,
         run_name=run_name,
@@ -351,6 +351,30 @@ def main(
         obj=shap_importance,
         artifacts_data_path=mlflow_models_data,
         artifact_format="csv",
+    )
+
+    # Log expanded SHAP importance CSV (category-level granularity)
+    # shap_importance_expanded is a raw numpy array — wrap it before logging
+    if not isinstance(shap_importance_expanded, pd.DataFrame):
+        shap_importance_expanded = pd.DataFrame(shap_importance_expanded)
+
+    mlflow_dumpArtifact(
+        experiment_name=experiment_name,
+        run_name=run_name,
+        obj_name="shap_feature_importance_expanded",
+        obj=shap_importance_expanded,
+        artifacts_data_path=mlflow_models_data,
+        artifact_format="csv",
+    )
+
+    # Log expanded beeswarm pkl (per-sample SHAP matrix for Dash app)
+    mlflow_dumpArtifact(
+        experiment_name=experiment_name,
+        run_name=run_name,
+        obj_name="shap_beeswarm_expanded",
+        obj=shap_output_dir / "shap_beeswarm_expanded.pkl",
+        artifacts_data_path=mlflow_models_data,
+        artifact_format="pkl",
     )
 
     print("SHAP analysis complete - plots and data logged to MLflow")

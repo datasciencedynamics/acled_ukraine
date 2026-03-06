@@ -1735,8 +1735,8 @@ def create_shap_plots(
         sample_size: Number of test samples to explain (SHAP is slow!)
 
     Returns:
-        shap_values: SHAP values array
-        feature_importance_df: DataFrame with feature importance
+        expanded_importance_df: DataFrame with category-level SHAP importance
+        feature_importance_df: DataFrame with collapsed feature importance
         figures: Dictionary of matplotlib figures
     """
 
@@ -1923,8 +1923,11 @@ def create_shap_plots(
         columns=feature_names,
     )
 
-    exploded_shap = pd.DataFrame()
-    exploded_features = pd.DataFrame()
+    # Accumulate all columns into dicts first, then build DataFrames
+    # in one pass — avoids repeated frame.insert which triggers the
+    # "highly fragmented DataFrame" PerformanceWarning.
+    shap_cols = {}
+    feat_cols = {}
 
     for col in cat_features:
         categories = X_sample_df[col].astype(str).values
@@ -1932,12 +1935,25 @@ def create_shap_plots(
         for cat in np.unique(categories):
             mask = categories == cat
             col_name = f"{col} = {cat}"
-            exploded_shap[col_name] = np.where(mask, shap_vals, 0)
-            exploded_features[col_name] = mask.astype(float)
+            shap_cols[col_name] = np.where(mask, shap_vals, 0)
+            feat_cols[col_name] = mask.astype(float)
 
     for col in num_features:
-        exploded_shap[col] = shap_df[col].values
-        exploded_features[col] = X_sample_df[col].values
+        shap_cols[col] = shap_df[col].values
+        feat_cols[col] = X_sample_df[col].values
+
+    exploded_shap = pd.DataFrame(shap_cols)
+    exploded_features = pd.DataFrame(feat_cols)
+
+    # Save per-sample expanded beeswarm data as pkl for the Dash app
+    import pickle
+
+    beeswarm_payload = {
+        "shap_values": exploded_shap.values,
+        "X": exploded_features,
+    }
+    with open(output_dir / "shap_beeswarm_expanded.pkl", "wb") as f:
+        pickle.dump(beeswarm_payload, f)
 
     mean_abs = exploded_shap.abs().mean().sort_values(ascending=False)
     top_cols = mean_abs.head(max_display).index.tolist()
@@ -1986,7 +2002,7 @@ def create_shap_plots(
     print(f"Saved: {output_dir}/shap_importance_expanded.png")
 
     # --------------------------------------------------------------
-    # STEP 9: Feature Importance DataFrame
+    # STEP 9: Feature Importance DataFrames
     # --------------------------------------------------------------
     print(f"\n[9/9] Creating feature importance table...")
 
@@ -2003,7 +2019,7 @@ def create_shap_plots(
         output_dir / "shap_feature_importance.csv", index=False
     )
 
-    # Also save expanded importance table
+    # Expanded importance table (category-level)
     expanded_importance_df = pd.DataFrame(
         {
             "feature": mean_abs.index,
@@ -2032,7 +2048,7 @@ def create_shap_plots(
     print("  - shap_feature_importance.csv - Feature importance table")
     print("  - shap_feature_importance_expanded.csv - Expanded importance table")
 
-    return shap_values, feature_importance_df, figures
+    return expanded_importance_df, feature_importance_df, figures
 
 
 ############################## Regression Metrics ##############################

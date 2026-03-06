@@ -364,8 +364,7 @@ eval_cat:
 		done; \
 	done
 	
-# eval_all_models: eval_lr eval_lasso eval_xgb eval_cat
-eval_all_models: eval_lr eval_lasso 
+eval_all_models: eval_lr eval_lasso eval_xgb eval_cat
 
 
 ################################ Modeling Pipeline #############################
