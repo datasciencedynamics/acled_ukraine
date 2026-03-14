@@ -3,7 +3,7 @@
 # GLOBALS
 # ------------------------------------------------------------------------------
 PROJECT_NAME = acled_ukraine
-PYTHON_VERSION = 3.11
+PYTHON_VERSION = 3.12.7
 PYTHON_INTERPRETER = python
 VENV_DIR = acled_venv
 CONDA_ENV_NAME = acled_conda
@@ -152,6 +152,7 @@ create_folders:
 	mkdir -p data/external data/interim data/processed data/raw data/processed/inference
 	mkdir -p modeling
 	mkdir -p preprocessing
+	mkdir -p images/png_images images/svg_images images/html_images
 	touch data/interim/.gitkeep
 	touch data/processed/.gitkeep
 	touch data/processed/inference/.gitkeep
