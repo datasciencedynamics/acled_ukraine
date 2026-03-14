@@ -1620,9 +1620,9 @@ def print_capture_summary(
     split_name: str,
     ks=(0.01, 0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.75, 0.90, 0.95, 0.99),
 ):
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 80)
     print(f"CUMULATIVE FATALITY CAPTURE SUMMARY ({split_name})")
-    print("=" * 70)
+    print("=" * 80)
 
     for k in ks:
         idx = int(np.ceil(k * len(capture_table))) - 1
@@ -1635,7 +1635,7 @@ def print_capture_summary(
 
     print("\nFirst 5 rows of capture table:")
     print(capture_table.head().round(4))
-    print("=" * 70 + "\n")
+    print("=" * 80 + "\n")
 
 
 ################################################################################

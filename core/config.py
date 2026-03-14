@@ -1,5 +1,3 @@
-import numpy as np
-
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -13,7 +11,7 @@ from sklearn.impute import SimpleImputer
 from imblearn.over_sampling import SMOTE
 from sklearn.feature_selection import RFE
 from imblearn.under_sampling import RandomUnderSampler
-from sklearn.linear_model import LinearRegression, Lasso, ElasticNet, Ridge
+from sklearn.linear_model import LinearRegression, Lasso, Ridge
 from xgboost import XGBRegressor
 from catboost import CatBoostRegressor
 
@@ -218,14 +216,10 @@ lasso = Lasso(random_state=rstate)
 # Define the hyperparameters
 tuned_parameters_lasso = [
     {
-        "lasso__alpha": [0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
+        "lasso__alpha": [0.0001, 0.001, 0.01, 0.05, 0.1, 0.5],
         "lasso__fit_intercept": [True, False],
-        "lasso__precompute": [False],
-        "lasso__copy_X": [True, False],
-        "lasso__max_iter": [100, 500],
+        "lasso__max_iter": [5000, 10000],
         "lasso__tol": [1e-4, 1e-3],
-        "lasso__warm_start": [True, False],
-        "lasso__positive": [True, False],
         "lasso__selection": ["cyclic", "random"],
     }
 ]
@@ -237,10 +231,34 @@ lasso_definition = {
     "estimator_name": lasso_name,
     "tuned_parameters": tuned_parameters_lasso,
     "randomized_grid": True,
-    "n_iter": 20,
+    "n_iter": 50,
     "early": False,
 }
 
+################################################################################
+############################# Ridge Regression #################################
+################################################################################
+
+ridge = Ridge(random_state=rstate)
+
+tuned_parameters_ridge = [
+    {
+        "ridge__alpha": [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0],
+        "ridge__fit_intercept": [True, False],
+        "ridge__solver": ["auto", "lsqr", "sparse_cg", "sag"],
+    }
+]
+
+ridge_name = "ridge"
+
+ridge_definition = {
+    "clc": ridge,
+    "estimator_name": ridge_name,
+    "tuned_parameters": tuned_parameters_ridge,
+    "randomized_grid": True,
+    "n_iter": 50,
+    "early": False,
+}
 
 ################################################################################
 ############################### XGBoost Regressor ##############################
@@ -375,6 +393,7 @@ cat_definition = {
 model_definitions = {
     lr_name: lr_definition,
     lasso_name: lasso_definition,
+    ridge_name: ridge_definition,
     xgb_name: xgb_definition,
     cat_name: cat_definition,
 }

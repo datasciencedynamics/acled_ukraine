@@ -148,17 +148,14 @@ def main(
             if isinstance(v, (int, float)) and not isinstance(v, bool)
         }
 
-        # Compute log-scale R² and Adjusted R²
-        y_pred_s = model.predict(X_s)
-        r2_log = r2_score(y_s, y_pred_s)
-        adj_r2_log = adjusted_r2(r2_log, n=len(y_s), p=n_features)
+        # adj_r2 derived from R2 already returned by return_metrics()
+        numeric_metrics["adj_r2"] = adjusted_r2(
+            numeric_metrics["R2"], n=len(y_s), p=n_features
+        )
+        log_r2_results[split] = numeric_metrics["R2"]
 
-        numeric_metrics["r2"] = r2_log
-        numeric_metrics["adj_r2"] = adj_r2_log
-        log_r2_results[split] = r2_log
-
-        print(f"  R²:      {r2_log:.4f}")
-        print(f"  Adj R²:  {adj_r2_log:.4f}")
+        print(f"  R²:      {numeric_metrics['R2']:.4f}")
+        print(f"  Adj R²:  {numeric_metrics['adj_r2']:.4f}")
 
         for k, v in numeric_metrics.items():
             split_metrics[f"{split}_{k}"] = v
@@ -181,12 +178,7 @@ def main(
     print("MODEL PERFORMANCE (Log Scale - Training Objective)")
     print("=" * 80)
 
-    log_r2_results = {}
-
-    for split, (X_s, y_s) in splits.items():
-        y_pred_s = model.predict(X_s)
-        r2_log = r2_score(y_s, y_pred_s)
-        log_r2_results[split] = r2_log
+    for split, r2_log in log_r2_results.items():
         print(f"{split.capitalize()} R-Squared (log): {r2_log:.4f}")
 
     print("=" * 80)

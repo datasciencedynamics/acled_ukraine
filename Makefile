@@ -264,6 +264,23 @@ train_lasso:
 		done; \
 	done
 
+### Train Ridge Regression
+train_ridge:
+	@echo "Pretrained is set to: $(PRETRAINED)"
+	@for o in $(OUTCOMES); do \
+		mkdir -p models/results/$$o; \
+		for p in $(PIPELINES); do \
+			"$(PYTHON_INTERPRETER)" $(PROJECT_DIRECTORY)/modeling/train.py \
+				--model-type ridge \
+				--pipeline-type $$p \
+				--outcome $$o \
+				--data-path ./data/processed \
+				--pretrained $(PRETRAINED) \
+				--scoring $(SCORING) \
+				2>&1 | tee models/results/$$o/ridge_$$p.txt; \
+		done; \
+	done
+
 ### Train XGBoost Regression
 train_xgb:
 	@echo "Pretrained is set to: $(PRETRAINED)"
@@ -299,7 +316,7 @@ train_cat:
 	done
 
 # train_all_models: train_lr train_lasso train_xgb train_cat
-train_all_models: train_lr train_lasso
+train_all_models: train_lr train_lasso train_ridge train_xgb train_cat
 ################################################################################
 ############################### Model Evaluation ###############################
 ################################################################################
@@ -334,6 +351,21 @@ eval_lasso:
 		done; \
 	done
 
+### Evaluate Ridge Regression
+eval_ridge:
+	@for o in $(OUTCOMES); do \
+		mkdir -p models/eval/$$o; \
+		for p in $(PIPELINES); do \
+			"$(PYTHON_INTERPRETER)" $(PROJECT_DIRECTORY)/modeling/evaluation.py \
+				--model-type ridge \
+				--pipeline-type $$p \
+				--outcome $$o \
+				--outcome-name $$o \
+				--data-path ./data/processed \
+				2>&1 | tee models/eval/$$o/eval_ridge_$$p.txt; \
+		done; \
+	done
+
 ### Evaluate XGBoost Regression
 eval_xgb:
 	@for o in $(OUTCOMES); do \
@@ -364,7 +396,7 @@ eval_cat:
 		done; \
 	done
 	
-eval_all_models: eval_lr eval_lasso eval_xgb eval_cat
+eval_all_models: eval_lr eval_lasso eval_ridge eval_xgb eval_cat
 
 
 ################################ Modeling Pipeline #############################
@@ -396,10 +428,11 @@ model_explanations_training:
 			--mode max \
 			--top-n 5 \
 			--shap-val-flag 1 \
+			--residual-threshold 5 \
 			--explanations-path ./data/processed/shap_predictions_$$outcome.csv \
 			2>&1 | tee ./data/processed/model_explanations_training_$$outcome.txt; \
 	done
-
+	
 model_explaining_training: model_explainer model_explanations_training
 
 

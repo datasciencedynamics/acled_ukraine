@@ -36,6 +36,7 @@ def main(
     explanations_path: Path = "",
     shap_val_flag: int = 1,  # flag for whether or not to print vals next to feats.
     top_n: int = 5,  # top n feats.
+    residual_threshold: float = 5.0,  # absolute fatality tolerance δ
 ):
 
     ############################################################################
@@ -191,14 +192,69 @@ def main(
             shap_df["actual_fatalities"] - shap_df["predicted_fatalities"]
         )
 
-        # Binarized confusion matrix: did fatalities occur? (> 0)
-        actual_bin = (shap_df["actual_fatalities"] > 0).astype(int)
-        pred_bin = (shap_df["predicted_fatalities"] > 0).astype(int)
+        # ------------------------------------------------------------------
+        # Residual-based confusion matrix
+        # ------------------------------------------------------------------
+        # Predictions within a fixed absolute tolerance δ of actual are
+        # considered "correct"; those outside are failure cases.
+        #
+        # δ = residual_threshold   [CLI param, default 5 fatalities]
+        #
+        # Quadrant definitions:
+        #   TP       — real event (actual > 0), |residual| within δ
+        #   FN       — real event (actual > 0), model underpredicted beyond δ
+        #               (residual > δ, i.e. actual >> predicted)
+        #   FP       — no event (actual == 0), model overpredicted beyond δ
+        #               (|residual| > δ, i.e. predicted >> actual)
+        #   TN       — no event (actual == 0), |residual| within δ
+        #   over_pred — real event (actual > 0), model overpredicted beyond δ
+        #               (residual < -δ, i.e. predicted >> actual)
+        # ------------------------------------------------------------------
 
-        shap_df["TP"] = ((actual_bin == 1) & (pred_bin == 1)).astype(int)
-        shap_df["FN"] = ((actual_bin == 1) & (pred_bin == 0)).astype(int)
-        shap_df["FP"] = ((actual_bin == 0) & (pred_bin == 1)).astype(int)
-        shap_df["TN"] = ((actual_bin == 0) & (pred_bin == 0)).astype(int)
+        # Inspect residual distribution to inform δ selection
+        print("\nResidual distribution:")
+        print(shap_df["residual"].describe())
+        print("\n|Residual| percentiles:")
+        print(
+            dict(
+                zip(
+                    [25, 50, 75, 90, 95],
+                    np.percentile(shap_df["residual"].abs(), [25, 50, 75, 90, 95]),
+                )
+            ),
+            "\n",
+        )
+
+        delta = residual_threshold
+        print(f"Residual tolerance δ = {delta:.1f} fatalities (fixed threshold)\n")
+
+        shap_df["residual_delta"] = delta
+
+        abs_residuals = shap_df["residual"].abs()
+        within_tolerance = abs_residuals <= delta
+        actual_nonzero = shap_df["actual_fatalities"] > 0
+
+        # Core quadrants
+        shap_df["TP"] = (actual_nonzero & within_tolerance).astype(int)
+        shap_df["FN"] = (
+            actual_nonzero & ~within_tolerance & (shap_df["residual"] > 0)
+        ).astype(int)
+        shap_df["FP"] = (
+            ~actual_nonzero & ~within_tolerance & (shap_df["residual"] < 0)
+        ).astype(int)
+        shap_df["TN"] = (~actual_nonzero & within_tolerance).astype(int)
+
+        # Events where actual > 0 but model over-predicted beyond δ
+        shap_df["over_pred"] = (
+            actual_nonzero & ~within_tolerance & (shap_df["residual"] < 0)
+        ).astype(int)
+
+        # Sanity check: every row should belong to exactly one category
+        category_sum = shap_df[["TP", "FN", "FP", "TN", "over_pred"]].sum(axis=1)
+        assert (category_sum == 1).all(), (
+            "Confusion matrix category assignment is not mutually exclusive / exhaustive. "
+            f"Rows with != 1 category:\n{shap_df[category_sum != 1]}"
+        )
 
         # Append original feature columns for context
         context_cols = [
