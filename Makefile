@@ -425,7 +425,7 @@ model_explainer:
 	@for outcome in $(EXPLAN_OUTCOME); do \
 		$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/modeling/explainer.py \
 			--outcome $$outcome \
-			--metric-name "valid_r2" \
+			--metric-name "valid_R2" \
 			--mode max \
 			2>&1 | tee ./data/processed/model_explainer_$$outcome.txt; \
 	done
@@ -436,7 +436,7 @@ model_explanations_training:
 		$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/modeling/explanations_training.py \
 			--features-path ./data/processed/X_test.parquet \
 			--outcome $$outcome \
-			--metric-name "valid_r2" \
+			--metric-name "valid_R2" \
 			--mode max \
 			--top-n 5 \
 			--shap-val-flag 1 \
@@ -477,7 +477,7 @@ predict:
 			--input-data-file data/processed/inference/X.parquet \
 			--predictions-path ./data/processed/inference/predictions_$$outcome.csv \
 			--outcome $$outcome \
-			--metric-name "valid_r2" \
+			--metric-name "valid_R2" \
 			--mode max \
 			2>&1 | tee ./data/processed/inference/predict_$$outcome.txt; \
 	done
@@ -487,7 +487,7 @@ model_explainer_inference:
 	@for outcome in $(EXPLAN_OUTCOME); do \
 		$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/modeling/explainer.py \
 			--outcome $$outcome \
-			--metric-name "valid_r2" \
+			--metric-name "valid_R2" \
 			--mode max; \
 	done
 
@@ -497,7 +497,7 @@ model_explanations_inference:
 		$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/modeling/explanations_inference.py \
 			--features-path ./data/processed/inference/X.parquet \
 			--outcome $$outcome \
-			--metric-name "test_r2" \
+			--metric-name "test_R2" \
 			--mode max \
 			--top-n 5 \
 			--shap-val-flag 1 \
