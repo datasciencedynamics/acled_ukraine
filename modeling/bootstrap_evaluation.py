@@ -29,13 +29,17 @@ BASE = Path("/home/lshpaner/Python_Projects/acled_ukraine")
 
 MODEL_PATHS = {
     "Linear Regressor": BASE
-    / "mlruns/models/506661572740402460/eeb1d20f10b6418ca8098ca32720cb2a/artifacts/lr_log_fatalities/model.pkl",
+    / "mlruns/models/618546375450881810/c00a6432dd054887a2858f29262c8662/artifacts/lr_log_fatalities/model.pkl",
+    ## lasso_orig_rfe_training
     "Lasso RFE": BASE
-    / "mlruns/models/506661572740402460/3c3047d83975436a91dc77b61d0be17c/artifacts/lasso_log_fatalities/model.pkl",
+    / "mlruns/models/618546375450881810/45a94ba689074cc6bfd4f723f5f7f38d/artifacts/lasso_log_fatalities/model.pkl",
+    # ridge_orig_rfe_training
+    "Ridge RFE": BASE
+    / "mlruns/models/618546375450881810/c79d08249184436699ccb2869fc3eb35/artifacts/ridge_log_fatalities/model.pkl",
     "XGBoost Regressor": BASE
-    / "mlruns/models/506661572740402460/a8837adc498842fbb75a86ebbe556999/artifacts/xgb_log_fatalities/model.pkl",
+    / "mlruns/models/618546375450881810/cfa2d7dcc8604ce09eca44264b1ab2eb/artifacts/xgb_log_fatalities/model.pkl",
     "CatBoost Regressor": BASE
-    / "mlruns/models/506661572740402460/5beff2fb495943e696a23888b4ffdfd8/artifacts/cat_log_fatalities/model.pkl",
+    / "mlruns/models/618546375450881810/ea4f31901bf449d3ba21fe1d3b85063a/artifacts/cat_log_fatalities/model.pkl",
 }
 
 DATA_DIR = BASE / "data/processed"
@@ -120,6 +124,7 @@ def build_model_inputs(models, X_raw, X_encoded) -> dict:
     return {
         "Linear Regressor": (models["Linear Regressor"], X_raw),
         "Lasso RFE": (models["Lasso RFE"], X_raw),
+        "Ridge RFE": (models["Ridge RFE"], X_raw),
         "XGBoost Regressor": (models["XGBoost Regressor"], X_encoded),
         "CatBoost Regressor": (models["CatBoost Regressor"], X_encoded),
     }
@@ -171,12 +176,14 @@ def run_point_estimates(models, X_train, X_valid, X_test, y_valid, y_test) -> No
     valid_preds = {
         "Linear Regressor": models["Linear Regressor"].predict(X_valid),
         "Lasso RFE": models["Lasso RFE"].predict(X_valid),
+        "Ridge RFE": models["Ridge RFE"].predict(X_valid),
         "XGBoost Regressor": models["XGBoost Regressor"].predict(X_valid_enc),
         "CatBoost Regressor": models["CatBoost Regressor"].predict(X_valid_enc),
     }
     test_preds = {
         "Linear Regressor": models["Linear Regressor"].predict(X_test),
         "Lasso RFE": models["Lasso RFE"].predict(X_test),
+        "Ridge RFE": models["Ridge RFE"].predict(X_test),
         "XGBoost Regressor": models["XGBoost Regressor"].predict(X_test_enc),
         "CatBoost Regressor": models["CatBoost Regressor"].predict(X_test_enc),
     }
