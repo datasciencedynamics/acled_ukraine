@@ -82,7 +82,7 @@ def main(
     input_data_file: Path = PROCESSED_DATA_DIR_INFER / "X.parquet",
     predictions_path: Path = "predictions.csv",
     outcome: str = target_log_outcome,
-    metric_name: str = "test_r2",
+    metric_name: str = "test_R2",
     mode: str = "max",
     data_path: Path = PROCESSED_DATA_DIR_INFER,
     training_data_path: Path = PROCESSED_DATA_DIR,
