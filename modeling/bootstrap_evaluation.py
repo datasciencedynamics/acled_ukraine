@@ -13,6 +13,7 @@ Usage:
 import sys
 import typer
 import pandas as pd
+import numpy as np
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
@@ -29,17 +30,17 @@ BASE = Path("/home/lshpaner/Python_Projects/acled_ukraine")
 
 MODEL_PATHS = {
     "Linear Regressor": BASE
-    / "mlruns/models/618546375450881810/c00a6432dd054887a2858f29262c8662/artifacts/lr_log_fatalities/model.pkl",
+    / "mlruns/models/619488654907862878/ea03902ec4ae4bb695f9aa2645e65159/artifacts/lr_log_fatalities/model.pkl",
     ## lasso_orig_rfe_training
     "Lasso RFE": BASE
-    / "mlruns/models/618546375450881810/45a94ba689074cc6bfd4f723f5f7f38d/artifacts/lasso_log_fatalities/model.pkl",
+    / "mlruns/models/619488654907862878/8956e1ff54734e57ab7700c6de3e25ed/artifacts/lasso_log_fatalities/model.pkl",
     # ridge_orig_rfe_training
     "Ridge RFE": BASE
-    / "mlruns/models/618546375450881810/c79d08249184436699ccb2869fc3eb35/artifacts/ridge_log_fatalities/model.pkl",
+    / "mlruns/models/619488654907862878/9ffe3399ce254481a33f9bc32779c459/artifacts/ridge_log_fatalities/model.pkl",
     "XGBoost Regressor": BASE
-    / "mlruns/models/618546375450881810/cfa2d7dcc8604ce09eca44264b1ab2eb/artifacts/xgb_log_fatalities/model.pkl",
+    / "mlruns/models/619488654907862878/9dca6fb948964b24a6b1d2061886e7a6/artifacts/xgb_log_fatalities/model.pkl",
     "CatBoost Regressor": BASE
-    / "mlruns/models/618546375450881810/ea4f31901bf449d3ba21fe1d3b85063a/artifacts/cat_log_fatalities/model.pkl",
+    / "mlruns/models/619488654907862878/dda33f95c3a1492c9296cc42f4b70d8e/artifacts/cat_log_fatalities/model.pkl",
 }
 
 DATA_DIR = BASE / "data/processed"
@@ -59,9 +60,7 @@ BOOTSTRAP_METRICS = [
     "r2",
     "adjusted_r2",
     "neg_root_mean_squared_error",
-    "neg_mean_squared_error",
     "neg_mean_absolute_error",
-    "explained_variance",
 ]
 
 ## Human-readable display names mapped from sklearn internal names
@@ -69,9 +68,7 @@ METRIC_DISPLAY_NAMES = {
     "r2": "R²",
     "adjusted_r2": "Adjusted R²",
     "neg_root_mean_squared_error": "RMSE",
-    "neg_mean_squared_error": "MSE",
     "neg_mean_absolute_error": "MAE",
-    "explained_variance": "Explained Variance",
 }
 
 ################################### Helpers ####################################
@@ -131,30 +128,23 @@ def build_model_inputs(models, X_raw, X_encoded) -> dict:
 
 
 def rename_metrics(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Replace sklearn internal metric names with human-readable labels and
-    flip the sign on negated error metrics so they read as positive values.
-    """
-    neg_metrics = {
-        "neg_root_mean_squared_error",
-        "neg_mean_squared_error",
-        "neg_mean_absolute_error",
-    }
-    numeric_cols = ["Mean", "95% CI Lower", "95% CI Upper"]
-
     df = df.copy()
 
-    # Flip sign on negated metrics so errors are positive
-    mask = df["Metric"].isin(neg_metrics)
-    df.loc[mask, numeric_cols] = df.loc[mask, numeric_cols] * -1
-
-    # Swap CI bounds so Lower < Upper after negation
-    df.loc[mask, ["95% CI Lower", "95% CI Upper"]] = df.loc[
-        mask, ["95% CI Upper", "95% CI Lower"]
-    ].values
-
-    # Apply display names
+    # Rename first
     df["Metric"] = df["Metric"].map(METRIC_DISPLAY_NAMES).fillna(df["Metric"])
+
+    # Flip based on display names — no dependency on sklearn internal names
+    error_metrics = {"RMSE", "MSE", "MAE"}
+    mask = df["Metric"].isin(error_metrics)
+
+    for col in ["Mean", "95% CI Lower", "95% CI Upper"]:
+        df[col] = np.where(mask, df[col].abs(), df[col])
+
+    # Re-sort CI bounds so Lower < Upper
+    ci_min = df[["95% CI Lower", "95% CI Upper"]].min(axis=1)
+    ci_max = df[["95% CI Lower", "95% CI Upper"]].max(axis=1)
+    df["95% CI Lower"] = np.where(mask, ci_min, df["95% CI Lower"])
+    df["95% CI Upper"] = np.where(mask, ci_max, df["95% CI Upper"])
 
     return df
 
@@ -212,23 +202,24 @@ def run_point_estimates(models, X_train, X_valid, X_test, y_valid, y_test) -> No
 def run_bootstrap(
     models,
     X_train,
-    X_test,
-    y_test,
+    X,
+    y,
+    split_name: str,
     n_samples: int,
     num_resamples: int,
     random_state: int,
 ) -> pd.DataFrame:
-    """Run bootstrapped CI evaluation for all models on the test set."""
-    (X_test_enc,) = encode_categoricals(X_train, X_test)
-    inputs = build_model_inputs(models, X_test, X_test_enc)
+    """Run bootstrapped CI evaluation for all models on a given split."""
+    (X_enc,) = encode_categoricals(X_train, X)
+    inputs = build_model_inputs(models, X, X_enc)
 
     all_results = []
-    for name, (model, X) in inputs.items():
-        console.print(f"[bold cyan]Bootstrap:[/bold cyan] {name}")
+    for name, (model, X_input) in inputs.items():
+        console.print(f"[bold cyan]Bootstrap ({split_name}):[/bold cyan] {name}")
         result = evaluate_bootstrap_metrics(
             model=model,
-            X=X,
-            y=y_test,
+            X=X_input,
+            y=y,
             y_pred_prob=None,
             n_samples=n_samples,
             num_resamples=num_resamples,
@@ -243,11 +234,10 @@ def run_bootstrap(
             class_proportions=None,
         )
         result.insert(0, "Model", name)
+        result.insert(0, "Split", split_name)
         all_results.append(result)
 
     combined = pd.concat(all_results, ignore_index=True)
-
-    # Clean up metric names and fix negated signs before returning
     return rename_metrics(combined)
 
 
@@ -259,6 +249,7 @@ def main(
     n_samples: int = typer.Option(5000, help="Bootstrap sample size per resample."),
     num_resamples: int = typer.Option(5000, help="Number of bootstrap resamples."),
     random_state: int = typer.Option(42, help="Random seed for reproducibility."),
+    split: str = typer.Option("test", help="Split to bootstrap: 'valid' or 'test'."),
     no_bootstrap: bool = typer.Option(
         False, help="Skip bootstrap; show point estimates only."
     ),
@@ -267,13 +258,6 @@ def main(
         help="Path to save combined bootstrap results CSV.",
     ),
 ):
-    """
-    Evaluate regression models on the ACLED Ukraine fatalities dataset.
-
-    Runs point-estimate R² summaries for validation and test sets, then
-    optionally runs bootstrapped confidence interval evaluation on the test set.
-    Results are always saved to CSV.
-    """
     models = load_models()
     X_train, X_valid, X_test, y_valid, y_test = load_data()
 
@@ -284,19 +268,28 @@ def main(
         console.print("\n[yellow]Skipping bootstrap (--no-bootstrap).[/yellow]")
         raise typer.Exit()
 
-    console.rule("[bold]Bootstrap Evaluation — Test Set[/bold]")
+    X_split = X_valid if split == "valid" else X_test
+    y_split = y_valid if split == "valid" else y_test
+
+    console.rule(f"[bold]Bootstrap Evaluation — {split.capitalize()} Set[/bold]")
     all_results = run_bootstrap(
-        models, X_train, X_test, y_test, n_samples, num_resamples, random_state
+        models,
+        X_train,
+        X_split,
+        y_split,
+        split.capitalize(),
+        n_samples,
+        num_resamples,
+        random_state,
     )
 
     console.print("\n[bold]Combined Bootstrap Results:[/bold]")
     console.print(all_results.round(3).to_string(index=False))
 
-    ## Always save to CSV
     out_path = Path(output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     all_results.round(3).to_csv(out_path, index=False)
-    console.print(f"\n[green]✓ Results saved to {out_path}[/green]")
+    console.print(f"\n[green] Results saved to {out_path}[/green]")
 
 
 if __name__ == "__main__":

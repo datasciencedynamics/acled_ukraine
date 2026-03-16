@@ -409,12 +409,15 @@ modeling_train_eval_pipeline: train_all_models eval_all_models
 ### Bootstrap Evaluation: Validation and Test Set
 bootstrap_evaluation:
 	@for o in $(OUTCOMES); do \
-		mkdir -p models/bootstrap/$$o; \
-		"$(PYTHON_INTERPRETER)" $(PROJECT_DIRECTORY)/modeling/bootstrap_evaluation.py \
-			--n-samples 5000 \
-			--num-resamples 5000 \
-			--output models/bootstrap/$$o/bootstrap_results.csv \
-			2>/dev/tty | tee models/bootstrap/$$o/bootstrap.txt; \
+		for s in valid test; do \
+			mkdir -p models/bootstrap/$$o; \
+			"$(PYTHON_INTERPRETER)" $(PROJECT_DIRECTORY)/modeling/bootstrap_evaluation.py \
+				--n-samples 5000 \
+				--num-resamples 5000 \
+				--split $$s \
+				--output models/bootstrap/$$o/bootstrap_results_$$s.csv \
+				2>/dev/tty | tee models/bootstrap/$$o/bootstrap_$$s.txt; \
+		done; \
 	done
 ################################################################################
 #################### Best Model Explainer and Explanations #####################

@@ -341,7 +341,7 @@ xgb_definition = {
 
 cat_name = "cat"
 cat = CatBoostRegressor(
-    task_type="CPU",
+    task_type="GPU",
     random_state=rstate,
     eval_metric="RMSE",
     bootstrap_type="Bernoulli",  # required when using subsample

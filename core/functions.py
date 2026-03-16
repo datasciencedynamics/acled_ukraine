@@ -10,7 +10,6 @@ import mlflow
 from mlflow.tracking import MlflowClient
 import pickle
 import os
-import networkx as nx
 import shap
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.pipeline import FunctionTransformer, Pipeline
@@ -60,31 +59,26 @@ def clean_dataframe(df, cols_with_thousand_separators=None):
         The DataFrame to be cleaned.
 
     cols_with_thousand_separators : list of str, optional
-        A list of column names that contain thousand separators and need to be
-        processed. If None, this step is skipped.
+        Columns containing thousand separators that should be removed before
+        numeric conversion.
 
     Returns
     -------
     pandas.DataFrame
-        The cleaned DataFrame.
+        Cleaned DataFrame.
     """
 
-    # Step 1: Replace None and blank values with NaN
+    ## Step 1: Replace problematic values globally
     replacements = {
         None: np.nan,
         "": np.nan,
-        "-{2,}": np.nan,
-        "\.{2,}": np.nan,
+        r"-{2,}": np.nan,
+        r"\.{2,}": np.nan,
     }
 
-    for col in tqdm(df.columns, desc="Replacing values in columns"):
-        for to_replace, value in replacements.items():
-            if to_replace is None:
-                df[col] = df[col].map(lambda x: value if x is to_replace else x)
-            else:
-                df[col] = df[col].replace(to_replace, value, regex=True)
+    df = df.replace(replacements, regex=True)
 
-    # Step 2: Remove thousand separators and convert to numeric if specified
+    ## Step 2: Handle columns with thousand separators
     if cols_with_thousand_separators:
         desc_text = "Processing columns with thousand separators"
         for col in tqdm(cols_with_thousand_separators, desc=desc_text):
@@ -93,17 +87,18 @@ def clean_dataframe(df, cols_with_thousand_separators=None):
                     df[col] = df[col].str.replace(",", "", regex=False)
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Step 3: Convert all other columns to numeric if possible
-    for col in tqdm(df.columns, desc="Converting columns to numeric"):
-        if (
-            not cols_with_thousand_separators
-            or col not in cols_with_thousand_separators
-        ):
-            try:
-                df[col] = pd.to_numeric(df[col])
-            except (ValueError, TypeError):
-                # If conversion fails, keep the column as is
-                pass
+    ## Step 3: Attempt numeric conversion for remaining columns
+    remaining_cols = (
+        [c for c in df.columns if c not in cols_with_thousand_separators]
+        if cols_with_thousand_separators
+        else df.columns
+    )
+
+    for col in tqdm(remaining_cols, desc="Converting columns to numeric"):
+        try:
+            df[col] = pd.to_numeric(df[col])
+        except (ValueError, TypeError):
+            pass
 
     return df
 
@@ -1215,129 +1210,6 @@ def normalize_actor(actor: str) -> str:
 
     # fallback
     return actor
-
-
-################################################################################
-# Actor Interactions Embeddings
-################################################################################
-
-
-def parse_assoc_actors(x):
-    if not isinstance(x, str) or x.strip() == "":
-        return []
-    return [a.strip() for a in x.split(";")]
-
-
-def build_actor_interaction_graph(
-    df,
-    actor1_col="actor1_root",
-    actor2_col="actor2_root",
-    assoc1_col="assoc_actor_1",
-    assoc2_col="assoc_actor_2",
-    none_actor_label="None_Actor",
-    main_weight=1.0,
-    assoc_weight=0.5,
-    none_actor_weight=0.3,
-):
-    """
-    Build a weighted, undirected actor interaction graph.
-    Primary actors define main edges; associated actors contribute
-    lower-weight contextual edges used for representation learning.
-    """
-
-    G = nx.Graph()
-
-    for _, row in tqdm(
-        df.iterrows(), total=len(df), desc="Building actor interaction graph"
-    ):
-        a1 = row[actor1_col]
-        a2 = row[actor2_col]
-
-        # main interaction
-        if a1 != a2:
-            w = main_weight
-            if a2 == none_actor_label:
-                w = none_actor_weight
-
-            if G.has_edge(a1, a2):
-                G[a1][a2]["weight"] += w
-            else:
-                G.add_edge(a1, a2, weight=w)
-
-        # assoc actors for actor1
-        for assoc in parse_assoc_actors(row.get(assoc1_col)):
-            assoc_root = normalize_actor(assoc)
-            if assoc_root != a1:
-                G.add_edge(
-                    a1,
-                    assoc_root,
-                    weight=G.get_edge_data(a1, assoc_root, {}).get("weight", 0)
-                    + assoc_weight,
-                )
-
-        # assoc actors for actor2
-        for assoc in parse_assoc_actors(row.get(assoc2_col)):
-            assoc_root = normalize_actor(assoc)
-            if assoc_root != a2:
-                G.add_edge(
-                    a2,
-                    assoc_root,
-                    weight=G.get_edge_data(a2, assoc_root, {}).get("weight", 0)
-                    + assoc_weight,
-                )
-
-    return G
-
-
-################################################################################
-## Actor Embedding Feature Engineering
-################################################################################
-
-
-def add_pairwise_embedding_features(
-    df: pd.DataFrame,
-    emb_prefix: str = "emb_",
-    a2_prefix: str = "a2_emb_",
-    add_diff: bool = False,
-    add_dot: bool = False,
-) -> pd.DataFrame:
-    """
-    Add optional pairwise actor embedding interaction features.
-
-    Options:
-    - add_diff: emb_diff_k = emb_k - a2_emb_k
-    - add_dot:  emb_dot = dot(emb, a2_emb)
-    """
-
-    emb_cols = sorted(
-        c
-        for c in df.columns
-        if c.startswith(emb_prefix) and not c.startswith(a2_prefix)
-    )
-    a2_cols = sorted(c for c in df.columns if c.startswith(a2_prefix))
-
-    if len(emb_cols) == 0 or len(a2_cols) == 0:
-        raise ValueError("Embedding columns not found in DataFrame.")
-
-    if len(emb_cols) != len(a2_cols):
-        raise ValueError(
-            f"Actor1 and Actor2 embedding dimensions do not match "
-            f"({len(emb_cols)} vs {len(a2_cols)})."
-        )
-
-    # Optional per-dimension differences
-    if add_diff:
-        for c1, c2 in zip(emb_cols, a2_cols):
-            dim = c1.replace(emb_prefix, "")
-            col_name = f"emb_diff_{dim}"
-            if col_name not in df.columns:
-                df[col_name] = df[c1] - df[c2]
-
-    # Optional dot product
-    if add_dot:
-        df["emb_dot"] = np.sum(df[emb_cols].values * df[a2_cols].values, axis=1)
-
-    return df
 
 
 ################################################################################
