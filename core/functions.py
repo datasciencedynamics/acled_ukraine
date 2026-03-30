@@ -5,9 +5,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 from matplotlib.ticker import FuncFormatter
-from IPython.display import display
 from tqdm import tqdm
 import mlflow
 from mlflow.tracking import MlflowClient
@@ -21,18 +19,12 @@ from sklearn.impute import SimpleImputer
 from imblearn.over_sampling import SMOTE
 from sklearn.feature_selection import RFE
 from pathlib import Path
+from typing import Optional
 
 from sklearn.metrics import (
-    confusion_matrix,
-    ConfusionMatrixDisplay,
     mean_squared_error,
     mean_absolute_error,
     r2_score,
-    precision_score,
-    recall_score,
-    brier_score_loss,
-    precision_score,
-    average_precision_score,
 )
 
 from tqdm import tqdm
@@ -1030,6 +1022,112 @@ def log_mlflow_metrics(
 
         for name, image in images.items():
             mlflow.log_figure(image, name)
+
+
+################################################################################
+############################ Export MLflow Runs ################################
+
+
+def export_mlflow_runs(
+    mlflow_model_path: str,
+    include_params: bool = True,
+    include_metrics: bool = True,
+    param_prefix: str = "param_",
+    metric_prefix: str = "metric_",
+    run_name_tag: str = "mlflow.runName",
+    as_dataframe: bool = True,
+    export_csv: Optional[str] = None,
+    verbose: bool = False,
+) -> list[dict] | pd.DataFrame:
+    """
+    Parse MLflow run artifacts from a local model directory into a structured
+    collection of records.
+
+    Parameters
+    ----------
+    mlflow_model_path : str
+        Path to the MLflow model directory containing run subdirectories
+        (e.g., `.../mlruns/models/<model_id>`).
+    include_params : bool, optional
+        Whether to read and include run parameters. Default is True.
+    include_metrics : bool, optional
+        Whether to read and include run metrics (last logged value). Default
+        is True.
+    param_prefix : str, optional
+        Column prefix applied to parameter names. Default is ``"param_"``.
+    metric_prefix : str, optional
+        Column prefix applied to metric names. Default is ``"metric_"``.
+    run_name_tag : str, optional
+        Tag filename used to resolve the human-readable run name. Default is
+        ``"mlflow.runName"``.
+    as_dataframe : bool, optional
+        If True (default), returns a ``pd.DataFrame``; otherwise returns a
+        list of dicts.
+    export_csv : str, optional
+        If provided, saves the resulting DataFrame to this filepath as a CSV.
+        Ignored when ``as_dataframe=False``. Default is None.
+    verbose : bool, optional
+        If True, prints the DataFrame shape and column names after loading.
+        Default is False.
+
+    Returns
+    -------
+    list[dict] or pd.DataFrame
+        Parsed run records, one per subdirectory found in ``mlflow_model_path``.
+    """
+    records = []
+
+    for run_id in os.listdir(mlflow_model_path):
+        run_path = os.path.join(mlflow_model_path, run_id)
+        if not os.path.isdir(run_path):
+            continue
+
+        record = {"run_id": run_id}
+
+        # run name
+        tag_path = os.path.join(run_path, "tags", run_name_tag)
+        if os.path.exists(tag_path):
+            record["run_name"] = open(tag_path).read().strip()
+
+        # params
+        if include_params:
+            params_path = os.path.join(run_path, "params")
+            if os.path.exists(params_path):
+                for f in os.listdir(params_path):
+                    fpath = os.path.join(params_path, f)
+                    if not os.path.isfile(fpath):
+                        continue
+                    record[f"{param_prefix}{f}"] = open(fpath).read().strip()
+
+        # metrics (last value)
+        if include_metrics:
+            metrics_path = os.path.join(run_path, "metrics")
+            if os.path.exists(metrics_path):
+                for f in os.listdir(metrics_path):
+                    fpath = os.path.join(metrics_path, f)
+                    if not os.path.isfile(fpath):
+                        continue
+                    lines = open(fpath).readlines()
+                    if lines:
+                        record[f"{metric_prefix}{f}"] = float(lines[-1].split()[1])
+
+        records.append(record)
+
+    if not as_dataframe:
+        return records
+
+    df = pd.DataFrame(records)
+
+    if verbose:
+        print(f"Shape: {df.shape}")
+        print(f"Columns: {df.columns.tolist()}")
+
+    if export_csv:
+        df.to_csv(export_csv, index=False)
+        if verbose:
+            print(f"Saved to: {export_csv}")
+
+    return df
 
 
 def find_best_model(
