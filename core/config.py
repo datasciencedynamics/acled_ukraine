@@ -11,7 +11,7 @@ from sklearn.impute import SimpleImputer
 from imblearn.over_sampling import SMOTE
 from sklearn.feature_selection import RFE
 from imblearn.under_sampling import RandomUnderSampler
-from sklearn.linear_model import LinearRegression, Lasso, Ridge
+from sklearn.linear_model import LinearRegression, Lasso, Ridge, ElasticNet
 from xgboost import XGBRegressor
 from catboost import CatBoostRegressor
 
@@ -261,6 +261,36 @@ ridge_definition = {
 }
 
 ################################################################################
+############################# Elastic Net Regression ###########################
+################################################################################
+
+# Create the model
+elastic_net = ElasticNet(random_state=rstate)
+
+# Define the hyperparameters
+tuned_parameters_elastic_net = [
+    {
+        "elastic_net__alpha": [0.0001, 0.001, 0.01, 0.05, 0.1, 0.5],
+        "elastic_net__l1_ratio": [0.1, 0.25, 0.5, 0.75, 0.9],
+        "elastic_net__fit_intercept": [True, False],
+        "elastic_net__max_iter": [5000, 10000],
+        "elastic_net__tol": [1e-4, 1e-3],
+        "elastic_net__selection": ["cyclic", "random"],
+    }
+]
+
+elastic_net_name = "elastic_net"
+
+elastic_net_definition = {
+    "clc": elastic_net,
+    "estimator_name": elastic_net_name,
+    "tuned_parameters": tuned_parameters_elastic_net,
+    "randomized_grid": True,
+    "n_iter": 50,
+    "early": False,
+}
+
+################################################################################
 ############################### XGBoost Regressor ##############################
 ################################################################################
 
@@ -394,6 +424,7 @@ model_definitions = {
     lr_name: lr_definition,
     lasso_name: lasso_definition,
     ridge_name: ridge_definition,
+    elastic_net_name: elastic_net_definition,
     xgb_name: xgb_definition,
     cat_name: cat_definition,
 }

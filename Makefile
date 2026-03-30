@@ -282,6 +282,23 @@ train_ridge:
 		done; \
 	done
 
+### Train Elastic Net Regression
+train_enet:
+	@echo "Pretrained is set to: $(PRETRAINED)"
+	@for o in $(OUTCOMES); do \
+		mkdir -p models/results/$$o; \
+		for p in $(PIPELINES); do \
+			"$(PYTHON_INTERPRETER)" $(PROJECT_DIRECTORY)/modeling/train.py \
+				--model-type elastic_net \
+				--pipeline-type $$p \
+				--outcome $$o \
+				--data-path ./data/processed \
+				--pretrained $(PRETRAINED) \
+				--scoring $(SCORING) \
+				2>&1 | tee models/results/$$o/elastic_net_$$p.txt; \
+		done; \
+	done
+
 ### Train XGBoost Regression
 train_xgb:
 	@echo "Pretrained is set to: $(PRETRAINED)"
@@ -316,8 +333,8 @@ train_cat:
 		done; \
 	done
 
-# train_all_models: train_lr train_lasso train_xgb train_cat
-train_all_models: train_lr train_lasso train_ridge train_xgb train_cat
+# train_all_models: train_lr train_lasso train_ridge train_enet train_xgb train_cat
+train_all_models: train_lr train_lasso train_ridge train_enet train_xgb train_cat
 ################################################################################
 ############################### Model Evaluation ###############################
 ################################################################################
@@ -367,6 +384,21 @@ eval_ridge:
 		done; \
 	done
 
+### Evaluate Elastic Net Regression
+eval_enet:
+	@for o in $(OUTCOMES); do \
+		mkdir -p models/eval/$$o; \
+		for p in $(PIPELINES); do \
+			"$(PYTHON_INTERPRETER)" $(PROJECT_DIRECTORY)/modeling/evaluation.py \
+				--model-type elastic_net \
+				--pipeline-type $$p \
+				--outcome $$o \
+				--outcome-name $$o \
+				--data-path ./data/processed \
+				2>&1 | tee models/eval/$$o/eval_elastic_net_$$p.txt; \
+		done; \
+	done
+
 ### Evaluate XGBoost Regression
 eval_xgb:
 	@for o in $(OUTCOMES); do \
@@ -397,7 +429,7 @@ eval_cat:
 		done; \
 	done
 	
-eval_all_models: eval_lr eval_lasso eval_ridge eval_xgb eval_cat
+eval_all_models: eval_lr eval_lasso eval_ridge eval_enet eval_xgb eval_cat
 
 
 ################################ Modeling Pipeline #############################

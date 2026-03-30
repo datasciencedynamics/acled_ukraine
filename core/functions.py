@@ -5,6 +5,9 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+from matplotlib.ticker import FuncFormatter
+from IPython.display import display
 from tqdm import tqdm
 import mlflow
 from mlflow.tracking import MlflowClient
@@ -1347,6 +1350,60 @@ def plot_actual_vs_predicted(
 ################################################################################
 
 
+def plot_cumulative_fatalities_captured_journal(
+    y_true_log: pd.Series,
+    y_pred_log: pd.Series,
+    model_name: str = "Model",
+    title: str = "Cumulative Fatalities Captured",
+    return_table: bool = False,
+    save_path: str = None,
+    dpi: int = 300,
+):
+    """
+    Journal-ready wrapper around plot_cumulative_fatalities_captured.
+
+    Applies publication-quality styling via rc_context (non-destructive),
+    suppresses Jupyter's double-render, and optionally exports to file.
+    """
+    journal_rc = {
+        "figure.dpi": dpi,
+        "figure.figsize": (7, 5.5),
+        "font.family": "serif",
+        "font.size": 10,
+        "axes.titlesize": 12,
+        "axes.labelsize": 11,
+        "axes.titleweight": "bold",
+        "axes.labelweight": "bold",
+        "xtick.labelsize": 9,
+        "ytick.labelsize": 9,
+        "legend.fontsize": 9,
+        "legend.framealpha": 0.9,
+        "lines.linewidth": 2,
+        "axes.grid": True,
+        "grid.alpha": 0.2,
+        "grid.linestyle": "--",
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+    }
+
+    with plt.rc_context(journal_rc):
+        result = plot_cumulative_fatalities_captured(
+            y_true_log, y_pred_log, model_name, title, return_table
+        )
+
+        fig, table = result if return_table else (result, None)
+
+        # apply formatter and save inside rc_context so styles are active
+        if len(fig.axes) > 1:
+            ax2 = fig.axes[1]
+            ax2.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{int(x):,}"))
+
+        if save_path:
+            fig.savefig(save_path, dpi=dpi, bbox_inches="tight", facecolor="white")
+    plt.close(fig)  # suppress auto-render; caller controls display
+    return (fig, table) if return_table else fig
+
+
 def plot_cumulative_fatalities_captured(
     y_true_log: pd.Series,
     y_pred_log: pd.Series,
@@ -1431,7 +1488,7 @@ def plot_cumulative_fatalities_captured(
             # Annotation with actual counts
             actual_count = cum_fatalities.iloc[idx]
             ax.annotate(
-                f"{int(pct*100)}% events\n→ {capture_rate*100:.0f}% casualties\n({int(actual_count):,} of {int(total_fatalities):,})",
+                f"{int(pct*100)}% events\n→ {capture_rate*100:.0f}% fatalities\n({int(actual_count):,} of {int(total_fatalities):,})",
                 xy=(pct, capture_rate),
                 xytext=(pct + 0.08, capture_rate - 0.12),
                 fontsize=9,
