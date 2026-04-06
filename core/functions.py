@@ -1324,6 +1324,9 @@ def plot_actual_vs_predicted(
     title: str = "Actual vs Predicted Fatalities",
     log_scale: bool = False,
     show_log_metrics: bool = False,
+    save_path: str = None,
+    save_format: str = "both",
+    dpi: int = 300,
 ):
     """
     Scatter plot of observed vs predicted fatalities.
@@ -1440,6 +1443,22 @@ def plot_actual_vs_predicted(
     )
 
     fig.tight_layout()
+
+    # Save to file(s)
+    if save_path:
+        if save_format in ("png", "both"):
+            fig.savefig(
+                f"{save_path}.png",
+                dpi=dpi,
+                bbox_inches="tight",
+                facecolor="white",
+            )
+        if save_format in ("svg", "both"):
+            fig.savefig(
+                f"{save_path}.svg",
+                bbox_inches="tight",
+                facecolor="white",
+            )
     return fig
 
 
@@ -2088,18 +2107,29 @@ def adjusted_r2(r2: float, n: int, p: int) -> float:
     return 1 - (1 - r2) * (n - 1) / (n - p - 1)
 
 
-############################## Haversine Distance ##############################
+############################## Compute Capture AUC #############################
 
 
-def haversine_km(lat, lon, ref_lat, ref_lon):
-    R = 6371
-    dlat = np.radians(lat - ref_lat)
-    dlon = np.radians(lon - ref_lon)
-    a = (
-        np.sin(dlat / 2) ** 2
-        + np.cos(np.radians(ref_lat)) * np.cos(np.radians(lat)) * np.sin(dlon / 2) ** 2
-    )
-    return R * 2 * np.arcsin(np.sqrt(a))
+def compute_capture_auc(y_true_log, y_pred_log):
+    """AUC of the cumulative fatalities captured curve (normalized to [0, 1])."""
+    y_true_actual = np.expm1(np.array(y_true_log))
+    y_pred_arr = np.array(y_pred_log)
+
+    # Sort events by predicted severity (descending)
+    order = np.argsort(-y_pred_arr)
+    y_sorted = y_true_actual[order]
+
+    cumsum = np.cumsum(y_sorted)
+    total = cumsum[-1]
+
+    if total == 0:
+        return 0.0
+
+    # Normalize both axes to [0, 1]
+    y_norm = cumsum / total
+    x_norm = np.linspace(1 / len(y_norm), 1.0, len(y_norm))
+
+    return float(np.trapz(y_norm, x_norm))
 
 
 ################################ End of functions.py ###########################

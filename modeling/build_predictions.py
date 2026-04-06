@@ -19,7 +19,7 @@ def main(
     outcome: str = target_log_outcome,
     pipeline_type: str = "orig",
     data_path: Path = PROCESSED_DATA_DIR,
-    output_dir: Path = Path("./models/eval"),
+    output_dir: Path = Path("./data/processed"),
 ):
     """
     Generate predictions from all models and save to a single predictions.csv.
@@ -58,6 +58,8 @@ def main(
     model_map = {
         "lr": model_definitions["lr"]["estimator_name"],
         "lasso": model_definitions["lasso"]["estimator_name"],
+        "ridge": model_definitions["ridge"]["estimator_name"],
+        "elastic_net": model_definitions["elastic_net"]["estimator_name"],
         "xgb": model_definitions["xgb"]["estimator_name"],
         "catboost": model_definitions["cat"]["estimator_name"],
     }

@@ -1,15 +1,3 @@
-"""
-evaluate_regression.py
-
-CLI for bootstrapped regression model evaluation across multiple models.
-
-Usage:
-    python evaluate_regression.py
-    python evaluate_regression.py --n-samples 1000 --num-resamples 1000
-    python evaluate_regression.py --no-bootstrap
-    python evaluate_regression.py --output results/bootstrap_results.csv
-"""
-
 import sys
 import typer
 import pandas as pd
@@ -19,6 +7,7 @@ from rich.console import Console
 from rich.table import Table
 from rich import box
 from sklearn.metrics import r2_score
+from sklearn.utils import resample
 from model_tuner import loadObjects, evaluate_bootstrap_metrics
 from model_metrics import summarize_model_performance
 
@@ -30,17 +19,21 @@ BASE = Path("/home/lshpaner/Python_Projects/acled_ukraine")
 
 MODEL_PATHS = {
     "Linear Regressor": BASE
-    / "mlruns/models/619488654907862878/ea03902ec4ae4bb695f9aa2645e65159/artifacts/lr_log_fatalities/model.pkl",
+    / "mlruns/models/306762030449779565/162f7fd63e104b25a59bb610c4439308/artifacts/lr_log_fatalities/model.pkl",
     ## lasso_orig_rfe_training
     "Lasso RFE": BASE
-    / "mlruns/models/619488654907862878/8956e1ff54734e57ab7700c6de3e25ed/artifacts/lasso_log_fatalities/model.pkl",
+    / "mlruns/models/306762030449779565/3d48f6d0797b4477bdcff57e51428624/artifacts/lasso_log_fatalities/model.pkl",
     # ridge_orig_rfe_training
     "Ridge RFE": BASE
-    / "mlruns/models/619488654907862878/9ffe3399ce254481a33f9bc32779c459/artifacts/ridge_log_fatalities/model.pkl",
+    / "mlruns/models/306762030449779565/37d760e4bca144708b8decb30afb8fa7/artifacts/ridge_log_fatalities/model.pkl",
+    # elasticnet_orig_rfe_training
+    "ElasticNet RFE": BASE
+    / "mlruns/models/306762030449779565/335f28ea0fc54feb8016b00993ade2c5/artifacts/elastic_net_log_fatalities/model.pkl",
     "XGBoost Regressor": BASE
-    / "mlruns/models/619488654907862878/9dca6fb948964b24a6b1d2061886e7a6/artifacts/xgb_log_fatalities/model.pkl",
+    / "mlruns/models/306762030449779565/04c10026de6d4dda9e318683f439be25/artifacts/xgb_log_fatalities/model.pkl",
+    # cat_orig_rfe_training
     "CatBoost Regressor": BASE
-    / "mlruns/models/619488654907862878/dda33f95c3a1492c9296cc42f4b70d8e/artifacts/cat_log_fatalities/model.pkl",
+    / "mlruns/models/306762030449779565/a11e1a6f5f98417cb1c1cc05a4d5b195/artifacts/cat_log_fatalities/model.pkl",
 }
 
 DATA_DIR = BASE / "data/processed"
@@ -69,6 +62,7 @@ METRIC_DISPLAY_NAMES = {
     "adjusted_r2": "Adjusted R²",
     "neg_root_mean_squared_error": "RMSE",
     "neg_mean_absolute_error": "MAE",
+    "capture_auc": "Capture AUC",
 }
 
 ################################### Helpers ####################################
@@ -122,6 +116,7 @@ def build_model_inputs(models, X_raw, X_encoded) -> dict:
         "Linear Regressor": (models["Linear Regressor"], X_raw),
         "Lasso RFE": (models["Lasso RFE"], X_raw),
         "Ridge RFE": (models["Ridge RFE"], X_raw),
+        "ElasticNet RFE": (models["ElasticNet RFE"], X_raw),
         "XGBoost Regressor": (models["XGBoost Regressor"], X_encoded),
         "CatBoost Regressor": (models["CatBoost Regressor"], X_encoded),
     }
@@ -167,6 +162,7 @@ def run_point_estimates(models, X_train, X_valid, X_test, y_valid, y_test) -> No
         "Linear Regressor": models["Linear Regressor"].predict(X_valid),
         "Lasso RFE": models["Lasso RFE"].predict(X_valid),
         "Ridge RFE": models["Ridge RFE"].predict(X_valid),
+        "ElasticNet RFE": models["ElasticNet RFE"].predict(X_valid),
         "XGBoost Regressor": models["XGBoost Regressor"].predict(X_valid_enc),
         "CatBoost Regressor": models["CatBoost Regressor"].predict(X_valid_enc),
     }
@@ -174,12 +170,13 @@ def run_point_estimates(models, X_train, X_valid, X_test, y_valid, y_test) -> No
         "Linear Regressor": models["Linear Regressor"].predict(X_test),
         "Lasso RFE": models["Lasso RFE"].predict(X_test),
         "Ridge RFE": models["Ridge RFE"].predict(X_test),
+        "ElasticNet RFE": models["ElasticNet RFE"].predict(X_test),
         "XGBoost Regressor": models["XGBoost Regressor"].predict(X_test_enc),
         "CatBoost Regressor": models["CatBoost Regressor"].predict(X_test_enc),
     }
 
-    print_r2_table("Validation Set — R²", valid_preds, y_valid)
-    print_r2_table("Test Set — R²", test_preds, y_test)
+    print_r2_table("Validation Set: R²", valid_preds, y_valid)
+    print_r2_table("Test Set: R²", test_preds, y_test)
 
     for split_label, X_raw, y, preds in [
         ("Validation", X_valid, y_valid, valid_preds),
@@ -197,6 +194,60 @@ def run_point_estimates(models, X_train, X_valid, X_test, y_valid, y_test) -> No
             decimal_places=3,
             include_adjusted_r2=True,
         )
+
+
+def bootstrap_capture_auc(
+    y_true,
+    y_pred,
+    n_samples=500,
+    num_resamples=1000,
+    random_state=222,
+):
+    """
+    Bootstrap the capture AUC metric independently, returning a single-row
+    DataFrame matching evaluate_bootstrap_metrics output format.
+    """
+    from random import seed as set_seed, randint
+
+    set_seed(random_state)
+
+    y_true = pd.Series(np.ravel(y_true)).reset_index(drop=True)
+    y_pred = pd.Series(np.ravel(y_pred)).reset_index(drop=True)
+
+    auc_scores = []
+    for _ in range(num_resamples):
+        idx = resample(
+            np.arange(len(y_true)),
+            replace=True,
+            n_samples=n_samples,
+            random_state=randint(0, 1_000_000),
+        )
+        yt = np.expm1(y_true.iloc[idx].values)
+        yp = y_pred.iloc[idx].values
+
+        order = np.argsort(-yp)
+        cumsum = np.cumsum(yt[order])
+        total = cumsum[-1]
+
+        if total == 0:
+            auc_scores.append(0.0)
+        else:
+            y_norm = cumsum / total
+            x_norm = np.linspace(1 / len(y_norm), 1.0, len(y_norm))
+            auc_scores.append(float(np.trapz(y_norm, x_norm)))
+
+    mean_score = np.mean(auc_scores)
+    ci_lower = np.percentile(auc_scores, 2.5)
+    ci_upper = np.percentile(auc_scores, 97.5)
+
+    return pd.DataFrame(
+        {
+            "Metric": ["capture_auc"],
+            "Mean": [mean_score],
+            "95% CI Lower": [ci_lower],
+            "95% CI Upper": [ci_upper],
+        }
+    )
 
 
 def run_bootstrap(
@@ -232,7 +283,20 @@ def run_bootstrap(
             stratify=None,
             balance=False,
             class_proportions=None,
+            ci_method="percentile",
         )
+
+        # Bootstrap capture AUC (computed outside model_tuner)
+        y_pred = pd.Series(np.ravel(model.predict(X_input)))
+        capture_row = bootstrap_capture_auc(
+            y_true=y,
+            y_pred=y_pred,
+            n_samples=n_samples,
+            num_resamples=num_resamples,
+            random_state=random_state,
+        )
+        result = pd.concat([result, capture_row], ignore_index=True)
+
         result.insert(0, "Model", name)
         result.insert(0, "Split", split_name)
         all_results.append(result)

@@ -13,7 +13,8 @@ PROJECT_DIRECTORY := $(abspath $(MAKEFILE_DIR))
 ############################## Training Globals ################################
 
 # Define variables for looping
-OUTCOMES = log_fatalities
+# OUTCOMES = fatalities log_fatalities
+OUTCOMES = fatalities
 PIPELINES = orig orig_rfe
 SCORING = r2
 PRETRAINED ?= 0  # 0 if you want to train the models, 1 if calibrate pretrained
@@ -449,6 +450,21 @@ bootstrap_evaluation:
 				--split $$s \
 				--output models/bootstrap/$$o/bootstrap_results_$$s.csv \
 				2>/dev/tty | tee models/bootstrap/$$o/bootstrap_$$s.txt; \
+		done; \
+	done
+
+################################################################################
+############################## Build Predictions ###############################
+################################################################################
+
+.PHONY: build_predictions
+build_predictions:
+	@for outcome in $(EXPLAN_OUTCOME); do \
+		for pipeline in $(PIPELINES); do \
+			$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/modeling/build_predictions.py \
+				--outcome $$outcome \
+				--pipeline-type $$pipeline \
+				2>&1 | tee ./data/processed/build_predictions_$${outcome}_$${pipeline}.txt; \
 		done; \
 	done
 ################################################################################

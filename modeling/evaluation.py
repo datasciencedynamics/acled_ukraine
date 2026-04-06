@@ -2,12 +2,7 @@ from pathlib import Path
 import typer
 from loguru import logger
 import pandas as pd
-import numpy as np
-from sklearn.metrics import r2_score
 
-# ------------------------------------------------------------------
-# Imports from your codebase (unchanged)
-# ------------------------------------------------------------------
 from core.functions import (
     plot_actual_vs_predicted,
     adjusted_r2,
@@ -18,6 +13,7 @@ from core.functions import (
     log_mlflow_metrics,
     mlflow_log_parameters_model,
     mlflow_dumpArtifact,
+    compute_capture_auc,
 )
 
 from core.constants import (
@@ -32,10 +28,6 @@ from core.config import (
 )
 
 app = typer.Typer()
-
-# ==================================================================
-# Main CLI entry
-# ==================================================================
 
 
 @app.command()
@@ -57,9 +49,10 @@ def main(
         data_path: Path to processed data directory
     """
 
-    # --------------------------------------------------------------
-    # STEP 1: Resolve model metadata
-    # --------------------------------------------------------------
+    ############################################################################
+    ## STEP 1: Resolve model metadata
+    ############################################################################
+
     estimator_name = model_definitions[model_type]["estimator_name"]
 
     # Default outcome_name to outcome if not provided
@@ -74,9 +67,10 @@ def main(
     print(f"Outcome: {outcome}")
     print("=" * 80)
 
-    # --------------------------------------------------------------
-    # STEP 2: Load trained model from MLflow
-    # --------------------------------------------------------------
+    ############################################################################
+    ## STEP 2: Load trained model from MLflow
+    ############################################################################
+
     print("\nLoading model from MLflow...")
     model = mlflow_load_model(
         experiment_name=experiment_name,
@@ -85,9 +79,10 @@ def main(
     )
     print("Model loaded successfully")
 
-    # --------------------------------------------------------------
-    # STEP 3: Load temporal splits
-    # --------------------------------------------------------------
+    ############################################################################
+    ## STEP 3: Load temporal splits
+    ############################################################################
+
     print("\nLoading temporal splits...")
 
     # Load X splits
@@ -114,20 +109,23 @@ def main(
     print(f"  Valid: {X_valid.shape[0]:,} samples")
     print(f"  Test:  {X_test.shape[0]:,} samples")
 
-    # --------------------------------------------------------------
-    # STEP 4: Store splits in dictionary
-    # --------------------------------------------------------------
+    ############################################################################
+    ## STEP 4: Store splits in dictionary
+    ############################################################################
+
     splits = {
         "train": (X_train, y_train),
         "valid": (X_valid, y_valid),
         "test": (X_test, y_test),
     }
 
-    # --------------------------------------------------------------
-    # STEP 5: Metrics by split
-    # --------------------------------------------------------------
+    ############################################################################
+    ## STEP 5: Metrics by split
+    ############################################################################
+
     split_metrics = {}
     log_r2_results = {}
+    split_predictions = {}
     n_features = X_train.shape[1]
 
     for split, (X_s, y_s) in splits.items():
@@ -154,8 +152,14 @@ def main(
         )
         log_r2_results[split] = numeric_metrics["R2"]
 
-        print(f"  R²:      {numeric_metrics['R2']:.4f}")
-        print(f"  Adj R²:  {numeric_metrics['adj_r2']:.4f}")
+        # Capture AUC (area under cumulative fatalities captured curve)
+        y_pred_s = pd.Series(model.predict(X_s), index=y_s.index)
+        split_predictions[split] = y_pred_s
+        numeric_metrics["capture_auc"] = compute_capture_auc(y_s, y_pred_s)
+
+        print(f"  R²:           {numeric_metrics['R2']:.4f}")
+        print(f"  Adj R²:       {numeric_metrics['adj_r2']:.4f}")
+        print(f"  Capture AUC:  {numeric_metrics['capture_auc']:.4f}")
 
         for k, v in numeric_metrics.items():
             split_metrics[f"{split}_{k}"] = v
@@ -171,9 +175,10 @@ def main(
     )
     print("Metrics logged")
 
-    # --------------------------------------------------------------
-    # STEP 6: Calculate and Display Log-Scale R-Squared Summary
-    # --------------------------------------------------------------
+    ############################################################################
+    ## STEP 6: Calculate and Display Log-Scale R-Squared Summary
+    ############################################################################
+
     print("\n" + "=" * 80)
     print("MODEL PERFORMANCE (Log Scale - Training Objective)")
     print("=" * 80)
@@ -183,9 +188,10 @@ def main(
 
     print("=" * 80)
 
-    # --------------------------------------------------------------
-    # STEP 7: Plots and capture tables by split
-    # --------------------------------------------------------------
+    ############################################################################
+    ## STEP 7: Plots and capture tables by split
+    ############################################################################
+
     print("\n" + "=" * 80)
     print("Generating evaluation plots...")
     print("=" * 80)
@@ -195,13 +201,10 @@ def main(
 
     for split, (X_s, y_s) in splits.items():
 
-        # Generate predictions
-        y_pred_s = pd.Series(
-            model.predict(X_s),
-            index=y_s.index,
-        )
+        ##  Reuse predictions from Step 5
+        y_pred_s = split_predictions[split]
 
-        # ---- Actual vs Predicted (show log-scale metrics)
+        ## Actual vs Predicted (show log-scale metrics)
         fig_avp = plot_actual_vs_predicted(
             y_true=y_s,
             y_pred=y_pred_s,
@@ -211,7 +214,7 @@ def main(
         )
         all_figs[f"actual_vs_predicted_{split}"] = fig_avp
 
-        # ---- Cumulative fatalities captured
+        ## Cumulative fatalities captured
         fig_cap, capture_df = plot_cumulative_fatalities_captured(
             y_true_log=y_s,
             y_pred_log=y_pred_s,
@@ -225,9 +228,10 @@ def main(
         # ---- Terminal summary
         print_capture_summary(capture_df, split.upper())
 
-    # --------------------------------------------------------------
-    # STEP 8: Log PNG plots
-    # --------------------------------------------------------------
+    ############################################################################
+    ## STEP 8: Log PNG plots
+    ############################################################################
+
     print("\n" + "=" * 80)
     print("Logging PNG plots to MLflow...")
     print("=" * 80)
@@ -241,9 +245,10 @@ def main(
     )
     print(f"Logged {len(png_figs)} PNG plots")
 
-    # --------------------------------------------------------------
-    # STEP 8b: Log SVG plots
-    # --------------------------------------------------------------
+    ############################################################################
+    ## STEP 8b: Log SVG plots
+    ############################################################################
+
     print("\n" + "=" * 80)
     print("Logging SVG plots to MLflow...")
     print("=" * 80)
@@ -259,9 +264,10 @@ def main(
         )
     print(f"Logged {len(all_figs)} SVG plots")
 
-    # --------------------------------------------------------------
-    # STEP 9: Log capture tables as CSV artifacts
-    # --------------------------------------------------------------
+    ############################################################################
+    ## STEP 9: Log capture tables as CSV artifacts
+    ############################################################################
+
     print("\n" + "=" * 80)
     print("Logging capture tables to MLflow...")
     print("=" * 80)
@@ -276,9 +282,9 @@ def main(
         )
     print("Capture tables logged")
 
-    # --------------------------------------------------------------
-    # STEP 10: Log model parameters
-    # --------------------------------------------------------------
+    ############################################################################
+    ## STEP 10: Log model parameters
+    ############################################################################
     print("\n" + "=" * 80)
     print("Logging model parameters to MLflow...")
     print("=" * 80)
@@ -290,9 +296,10 @@ def main(
     )
     print("Model parameters logged")
 
-    # --------------------------------------------------------------
-    # STEP 11: SHAP Analysis
-    # --------------------------------------------------------------
+    ############################################################################
+    ## STEP 11: SHAP Analysis
+    ############################################################################
+
     print("\n" + "=" * 80)
     print("Running SHAP analysis...")
     print("=" * 80)
@@ -374,6 +381,5 @@ def main(
     logger.success("Model evaluation complete.")
 
 
-# ==================================================================
 if __name__ == "__main__":
     app()
