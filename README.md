@@ -86,7 +86,6 @@ acled_ukraine/
 ├── mlruns/
 ├── Makefile
 ├── README.md
-├── README_text_models_nlp.md
 ├── requirements.txt
 └── setup.py
 ```
@@ -393,8 +392,6 @@ Exploratory and analytical notebooks are located in `notebooks/`. These are not 
 | `performance_assessment.ipynb` | Cross-model performance comparison |
 | `theoretical_auc.ipynb` | Theoretical analysis of the AUC-CC metric |
 | `visualizations.ipynb` | Manuscript and presentation figure generation |
-
-For notes on text-based NLP model variants, see [`README_text_models_nlp.md`](README_text_models_nlp.md).
 
 ---
 
