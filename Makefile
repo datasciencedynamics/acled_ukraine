@@ -13,8 +13,7 @@ PROJECT_DIRECTORY := $(abspath $(MAKEFILE_DIR))
 ############################## Training Globals ################################
 
 # Define variables for looping
-# OUTCOMES = fatalities log_fatalities
-OUTCOMES = fatalities
+OUTCOMES = log_fatalities
 PIPELINES = orig orig_rfe
 SCORING = r2
 PRETRAINED ?= 0  # 0 if you want to train the models, 1 if calibrate pretrained
@@ -436,6 +435,7 @@ eval_all_models: eval_lr eval_lasso eval_ridge eval_enet eval_xgb eval_cat
 ################################ Modeling Pipeline #############################
 ### Shortcut to run full modeling pipeline: training, evaluation
 ################################################################################
+
 modeling_train_eval_pipeline: train_all_models eval_all_models
 
 
@@ -467,6 +467,7 @@ build_predictions:
 				2>&1 | tee ./data/processed/build_predictions_$${outcome}_$${pipeline}.txt; \
 		done; \
 	done
+
 ################################################################################
 #################### Best Model Explainer and Explanations #####################
 ################################################################################
@@ -560,6 +561,7 @@ preproc_pipeline_inference: data_prep_preprocessing_inference \
     predict \
 	model_explainer_inference \
     model_explanations_inference
+
 #################################################################################
 # Self Documenting Commands                                                     #
 #################################################################################
