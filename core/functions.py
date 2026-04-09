@@ -1767,6 +1767,8 @@ def create_shap_plots(
     output_dir: Path = Path("./models/eval"),
     max_display: int = 20,
     sample_size: int = 100,
+    feature_rename: dict = None,
+    side_by_side: bool = False,
 ):
     """
     Create comprehensive SHAP plots for model interpretation.
@@ -1779,7 +1781,12 @@ def create_shap_plots(
         output_dir: Directory to save plots
         max_display: Number of features to show in summary plots
         sample_size: Number of test samples to explain (SHAP is slow!)
-
+        feature_rename: Optional dict mapping raw feature names (e.g.
+            "cat__source_scale") to clean display names (e.g.
+            "Source Scale"). When provided, all plot labels, CSVs,
+            and returned DataFrames use the cleaned names.
+        side_by_side: If True, generates an additional figure with the
+            expanded beeswarm and bar plots side by side.
     Returns:
         expanded_importance_df: DataFrame with category-level SHAP importance
         feature_importance_df: DataFrame with collapsed feature importance
@@ -1798,6 +1805,27 @@ def create_shap_plots(
 
     # Dictionary to store figures
     figures = {}
+
+    # ------------------------------------------------------------------
+    # Helper: rename a single feature name (collapsed or expanded)
+    # ------------------------------------------------------------------
+    def _clean(name):
+        if feature_rename is None:
+            return name
+        if " = " in name:
+            prefix_part, value = name.split(" = ", 1)
+            base = feature_rename.get(
+                prefix_part,
+                prefix_part.replace("cat__", "")
+                .replace("num__", "")
+                .replace("_", " ")
+                .title(),
+            )
+            return f"{base} = {value}"
+        return feature_rename.get(
+            name,
+            name.replace("cat__", "").replace("num__", "").replace("_", " ").title(),
+        )
 
     # --------------------------------------------------------------
     # STEP 1: Extract the actual estimator from wrapper
@@ -1902,6 +1930,9 @@ def create_shap_plots(
             le = LabelEncoder()
             X_sample_display[col] = le.fit_transform(X_sample_display[col].astype(str))
 
+    # Build display names (clean labels for plots)
+    display_names = [_clean(f) for f in feature_names]
+
     # --------------------------------------------------------------
     # STEP 5: Summary Plot (Bar) - Feature Importance
     # --------------------------------------------------------------
@@ -1911,7 +1942,7 @@ def create_shap_plots(
     shap.summary_plot(
         shap_values,
         X_sample,
-        feature_names=feature_names,
+        feature_names=display_names,
         plot_type="bar",
         max_display=max_display,
         show=False,
@@ -1934,7 +1965,7 @@ def create_shap_plots(
     shap.summary_plot(
         shap_values,
         X_sample_display.values,  # numpy array, not DataFrame
-        feature_names=list(X_sample_display.columns),
+        feature_names=display_names,
         max_display=max_display,
         show=False,
     )
@@ -1950,14 +1981,6 @@ def create_shap_plots(
     # --------------------------------------------------------------
     # STEP 7: Expanded Category-Level Beeswarm
     # --------------------------------------------------------------
-    # For models using native categorical support (e.g. XGBoost with
-    # enable_categorical=True), SHAP returns one value per categorical
-    # column. This step explodes that single value into per-category-
-    # level rows: for each sample, the SHAP value is assigned to the
-    # active category level and zeroed out for all others. This allows
-    # the beeswarm and bar plots to show which specific category levels
-    # (e.g. admin1=Donetsk, sub_event_type=Shelling) drive predictions.
-    # --------------------------------------------------------------
     print(f"\n[7/9] Creating expanded category-level beeswarm plot...")
 
     cat_features = [c for c in feature_names if c.startswith("cat__")]
@@ -1969,24 +1992,23 @@ def create_shap_plots(
         columns=feature_names,
     )
 
-    # Accumulate all columns into dicts first, then build DataFrames
-    # in one pass — avoids repeated frame.insert which triggers the
-    # "highly fragmented DataFrame" PerformanceWarning.
     shap_cols = {}
     feat_cols = {}
 
     for col in cat_features:
+        display_col = _clean(col)
         categories = X_sample_df[col].astype(str).values
         shap_vals = shap_df[col].values
         for cat in np.unique(categories):
             mask = categories == cat
-            col_name = f"{col} = {cat}"
+            col_name = f"{display_col} = {cat}"
             shap_cols[col_name] = np.where(mask, shap_vals, 0)
             feat_cols[col_name] = mask.astype(float)
 
     for col in num_features:
-        shap_cols[col] = shap_df[col].values
-        feat_cols[col] = X_sample_df[col].values
+        display_col = _clean(col)
+        shap_cols[display_col] = shap_df[col].values
+        feat_cols[display_col] = X_sample_df[col].values
 
     exploded_shap = pd.DataFrame(shap_cols)
     exploded_features = pd.DataFrame(feat_cols)
@@ -2013,7 +2035,7 @@ def create_shap_plots(
     fig_beeswarm_expanded = plt.figure(figsize=(12, 10))
     shap.plots.beeswarm(shap_explanation, max_display=max_display, show=False)
     plt.title(
-        "SHAP Summary Plot — Category-Level Drill-Down",
+        "SHAP Summary Plot - Category-Level Drill-Down",
         fontsize=14,
         fontweight="bold",
     )
@@ -2033,7 +2055,7 @@ def create_shap_plots(
     fig_importance_expanded = plt.figure(figsize=(12, 10))
     shap.plots.bar(shap_explanation, max_display=max_display, show=False)
     plt.title(
-        "SHAP Feature Importance — Category-Level Drill-Down",
+        "SHAP Feature Importance - Category-Level Drill-Down",
         fontsize=14,
         fontweight="bold",
     )
@@ -2048,13 +2070,216 @@ def create_shap_plots(
     print(f"Saved: {output_dir}/shap_importance_expanded.png")
 
     # --------------------------------------------------------------
+    # STEP 8b: Expanded Category-Level Importance (Blue Bar)
+    # --------------------------------------------------------------
+    print("\n[8b] Creating expanded category-level importance plot (blue)...")
+
+    fig_importance_expanded_blue = plt.figure(figsize=(12, 10))
+    shap.summary_plot(
+        shap_explanation.values,
+        shap_explanation.data,
+        feature_names=shap_explanation.feature_names,
+        plot_type="bar",
+        max_display=max_display,
+        show=False,
+    )
+    plt.title(
+        "SHAP Feature Importance - Category-Level Drill-Down",
+        fontsize=14,
+        fontweight="bold",
+    )
+    plt.tight_layout()
+
+    plt.savefig(
+        output_dir / "shap_importance_expanded_blue.png", dpi=300, bbox_inches="tight"
+    )
+    plt.savefig(output_dir / "shap_importance_expanded_blue.svg", bbox_inches="tight")
+
+    figures["shap_importance_expanded_blue"] = fig_importance_expanded_blue
+    print(f"Saved: {output_dir}/shap_importance_expanded_blue.png")
+
+    # --------------------------------------------------------------
+    # STEP 8c: Side-by-Side Expanded Beeswarm + Bar
+    # --------------------------------------------------------------
+    if side_by_side:
+        print("\n[8c] Creating side-by-side expanded plots...")
+
+        from PIL import Image as PILImage
+        import io
+
+        # Render beeswarm to buffer
+        fig_bee_tmp = plt.figure(figsize=(12, 10))
+        shap.summary_plot(
+            shap_explanation.values,
+            shap_explanation.data,
+            feature_names=shap_explanation.feature_names,
+            max_display=max_display,
+            show=False,
+        )
+        plt.title(
+            "SHAP Summary Plot - Category-Level Drill-Down",
+            fontsize=14,
+            fontweight="bold",
+        )
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.93)
+        buf_bee = io.BytesIO()
+        fig_bee_tmp.savefig(buf_bee, format="png", dpi=300, bbox_inches="tight")
+        plt.close(fig_bee_tmp)
+        buf_bee.seek(0)
+        img_bee = PILImage.open(buf_bee)
+
+        # Render bar to buffer
+        fig_bar_tmp = plt.figure(figsize=(12, 10))
+        shap.summary_plot(
+            shap_explanation.values,
+            shap_explanation.data,
+            feature_names=shap_explanation.feature_names,
+            plot_type="bar",
+            max_display=max_display,
+            show=False,
+        )
+        plt.title(
+            "SHAP Feature Importance - Category-Level Drill-Down",
+            fontsize=14,
+            fontweight="bold",
+        )
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.93)
+        buf_bar = io.BytesIO()
+        fig_bar_tmp.savefig(buf_bar, format="png", dpi=300, bbox_inches="tight")
+        plt.close(fig_bar_tmp)
+        buf_bar.seek(0)
+        img_bar = PILImage.open(buf_bar)
+
+        # Stitch side by side as true vector SVG
+        # Save each half to SVG buffers
+        buf_bee_svg = io.BytesIO()
+        fig_bee_svg = plt.figure(figsize=(12, 10))
+        shap.summary_plot(
+            shap_explanation.values,
+            shap_explanation.data,
+            feature_names=shap_explanation.feature_names,
+            max_display=max_display,
+            show=False,
+        )
+        plt.title(
+            "SHAP Summary Plot - Category-Level Drill-Down",
+            fontsize=14,
+            fontweight="bold",
+        )
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.93)
+        fig_bee_svg.savefig(buf_bee_svg, format="svg", bbox_inches="tight")
+        plt.close(fig_bee_svg)
+        buf_bee_svg.seek(0)
+
+        buf_bar_svg = io.BytesIO()
+        fig_bar_svg = plt.figure(figsize=(12, 10))
+        shap.summary_plot(
+            shap_explanation.values,
+            shap_explanation.data,
+            feature_names=shap_explanation.feature_names,
+            plot_type="bar",
+            max_display=max_display,
+            show=False,
+        )
+        plt.title(
+            "SHAP Feature Importance - Category-Level Drill-Down",
+            fontsize=14,
+            fontweight="bold",
+        )
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.93)
+        fig_bar_svg.savefig(buf_bar_svg, format="svg", bbox_inches="tight")
+        plt.close(fig_bar_svg)
+        buf_bar_svg.seek(0)
+
+        # Combine two SVGs into one using XML manipulation
+        import xml.etree.ElementTree as ET
+
+        ET.register_namespace("", "http://www.w3.org/2000/svg")
+        ET.register_namespace("xlink", "http://www.w3.org/1999/xlink")
+
+        tree_bee = ET.parse(buf_bee_svg)
+        tree_bar = ET.parse(buf_bar_svg)
+        root_bee = tree_bee.getroot()
+        root_bar = tree_bar.getroot()
+
+        ns = {"svg": "http://www.w3.org/2000/svg"}
+
+        # Extract width/height from each SVG
+        def _parse_dim(val):
+            """Strip 'pt' or 'px' suffix and return float."""
+            return float(val.replace("pt", "").replace("px", "").strip())
+
+        w1 = _parse_dim(root_bee.get("width", "864"))
+        h1 = _parse_dim(root_bee.get("height", "720"))
+        w2 = _parse_dim(root_bar.get("width", "864"))
+        h2 = _parse_dim(root_bar.get("height", "720"))
+
+        gap = 20  # points of space between the two plots
+        total_w = w1 + gap + w2
+        total_h = max(h1, h2)
+
+        # Create combined SVG root (avoid duplicate xmlns)
+        svg_ns = "http://www.w3.org/2000/svg"
+        combined_svg = ET.Element(
+            f"{{{svg_ns}}}svg",
+            version="1.1",
+            width=f"{total_w}pt",
+            height=f"{total_h}pt",
+            viewBox=f"0 0 {total_w} {total_h}",
+        )
+
+        # Left panel: beeswarm
+        g_left = ET.SubElement(combined_svg, "g", transform="translate(0,0)")
+        for child in list(root_bee):
+            g_left.append(child)
+
+        # Right panel: bar
+        g_right = ET.SubElement(combined_svg, "g", transform=f"translate({w1 + gap},0)")
+        for child in list(root_bar):
+            g_right.append(child)
+
+        combined_tree = ET.ElementTree(combined_svg)
+        combined_tree.write(
+            str(output_dir / "shap_expanded_side_by_side.svg"),
+            xml_declaration=True,
+            encoding="unicode",
+        )
+
+        # Also save high-res PNG from the raster stitch
+        total_width = img_bee.width + img_bar.width
+        max_height = max(img_bee.height, img_bar.height)
+        combined_png = PILImage.new("RGB", (total_width, max_height), (255, 255, 255))
+        combined_png.paste(img_bee, (0, 0))
+        combined_png.paste(img_bar, (img_bee.width, 0))
+        combined_png.save(output_dir / "shap_expanded_side_by_side.png", dpi=(600, 600))
+
+        # Keep in figures dict for notebook display
+        fig_side = plt.figure(figsize=(28, 12))
+        plt.imshow(combined_png)
+        plt.axis("off")
+        plt.tight_layout(pad=0)
+
+        figures["shap_expanded_side_by_side"] = fig_side
+        print(f"Saved: {output_dir}/shap_expanded_side_by_side.svg (vector)")
+        print(f"Saved: {output_dir}/shap_expanded_side_by_side.png (600 DPI)")
+
+        buf_bee.close()
+        buf_bar.close()
+        buf_bee_svg.close()
+        buf_bar_svg.close()
+
+    # --------------------------------------------------------------
     # STEP 9: Feature Importance DataFrames
     # --------------------------------------------------------------
     print(f"\n[9/9] Creating feature importance table...")
 
     feature_importance_df = pd.DataFrame(
         {
-            "feature": feature_names,
+            "feature": display_names,
             "importance": np.abs(shap_values).mean(axis=0),
             "mean_shap_value": shap_values.mean(axis=0),
             "abs_mean_shap": np.abs(shap_values).mean(axis=0),
