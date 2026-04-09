@@ -1,5 +1,5 @@
 black==24.10.0
-eda_toolkit==0.0.27
+eda_toolkit==0.0.28
 equiboots==0.0.1a11
 -e .
 loguru==0.7.3
