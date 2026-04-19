@@ -19,6 +19,7 @@ from sklearn.impute import SimpleImputer
 from imblearn.over_sampling import SMOTE
 from sklearn.feature_selection import RFE
 from pathlib import Path
+import yaml
 from typing import Optional
 
 from sklearn.metrics import (
@@ -29,10 +30,14 @@ from sklearn.metrics import (
 
 from tqdm import tqdm
 
+from model_tuner import loadObjects
+
 from core.constants import (
     mlflow_artifacts_data,
     mlflow_models_data,
     databricks_username,
+    target_log_outcome,
+    EXPERIMENT_NAME,
 )
 
 
@@ -1238,6 +1243,91 @@ def return_best_model(outcome, metric, mlruns_location=None, databricks=False):
 
 
 ################################################################################
+################################ MLFlow Helpers ################################
+# These are used by the model training and evaluation functions above to interact
+# with MLflow for logging and loading models, parameters, metrics, and artifacts.
+
+# ----------------------------------------------------------------------
+# helpers
+# ----------------------------------------------------------------------
+
+# Resolve mlruns path relative to this file, not CWD.
+# core/functions.py -> parent is core/, parent.parent is repo root.
+_MLRUNS_URI = (Path(__file__).resolve().parent.parent / "mlruns" / "models").as_uri()
+
+mlflow.set_tracking_uri(_MLRUNS_URI)  # set URI FIRST
+client = MlflowClient()  # then create client
+exp = client.get_experiment_by_name(EXPERIMENT_NAME)
+
+if exp is None:
+    raise ValueError(
+        f"experiment '{EXPERIMENT_NAME}' not found at {mlflow.get_tracking_uri()}"
+    )
+
+
+def latest_run_id(run_name):
+    runs = client.search_runs(
+        experiment_ids=[exp.experiment_id],
+        filter_string=f"tags.mlflow.runName = '{run_name}'",
+        order_by=["attributes.start_time DESC"],
+        max_results=1,
+    )
+    if not runs:
+        raise ValueError(f"no run found for run name '{run_name}'")
+    return runs[0].info.run_id
+
+
+def load_model_from_mlflow(run_name, algo):
+    run_id = latest_run_id(run_name)
+    artifact_uri = f"runs:/{run_id}/{algo}_{target_log_outcome}/model.pkl"
+    local_path = mlflow.artifacts.download_artifacts(artifact_uri)
+    return loadObjects(local_path)
+
+
+################################################################################
+############################### MLFlow Run Path Resolution #####################
+# This is used to find the artifact path for a given experiment and run name
+# without hardcoding IDs, which can be useful for loading artifacts when you
+# only know the experiment and run names
+
+
+def resolve_mlflow_run_path(tracking_root, experiment_name, run_name):
+    """Find the artifact path for a given experiment + run name, no hardcoded ids."""
+    root = Path(tracking_root)
+
+    # find the experiment folder whose meta.yaml name matches
+    exp_path = None
+    for exp_dir in root.iterdir():
+        if not exp_dir.is_dir() or exp_dir.name == ".trash":
+            continue
+        meta = exp_dir / "meta.yaml"
+        if not meta.exists():
+            continue
+        with open(meta) as f:
+            if yaml.safe_load(f).get("name") == experiment_name:
+                exp_path = exp_dir
+                break
+    if exp_path is None:
+        raise ValueError(f"experiment '{experiment_name}' not found under {root}")
+
+    # find the newest run with matching mlflow.runName tag
+    candidates = []
+    for run_dir in exp_path.iterdir():
+        if not run_dir.is_dir():
+            continue
+        tag_file = run_dir / "tags" / "mlflow.runName"
+        if tag_file.exists() and tag_file.read_text().strip() == run_name:
+            candidates.append(run_dir)
+    if not candidates:
+        raise ValueError(
+            f"run '{run_name}' not found in experiment '{experiment_name}'"
+        )
+
+    newest = max(candidates, key=lambda p: p.stat().st_mtime)
+    return newest / "artifacts"
+
+
+################################################################################
 ############################### Actor Embeddings ###############################
 ################################################################################
 
@@ -1769,6 +1859,8 @@ def create_shap_plots(
     sample_size: int = 100,
     feature_rename: dict = None,
     side_by_side: bool = False,
+    bar_style: str = "shap",
+    random_state: int = 222,
 ):
     """
     Create comprehensive SHAP plots for model interpretation.
@@ -1787,6 +1879,10 @@ def create_shap_plots(
             and returned DataFrames use the cleaned names.
         side_by_side: If True, generates an additional figure with the
             expanded beeswarm and bar plots side by side.
+        bar_style: Controls the bar chart style used in the side-by-side
+            figure. "shap" (default) uses shap.plots.bar (blue bars).
+            "summary" uses shap.summary_plot with plot_type="bar"
+            (pink bars with labeled values).
     Returns:
         expanded_importance_df: DataFrame with category-level SHAP importance
         feature_importance_df: DataFrame with collapsed feature importance
@@ -1803,7 +1899,6 @@ def create_shap_plots(
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Dictionary to store figures
     figures = {}
 
     # ------------------------------------------------------------------
@@ -1833,105 +1928,195 @@ def create_shap_plots(
     print("\n[1/9] Extracting estimator from wrapper...")
 
     fitted_pipeline = model.estimator
+
+    # Unwrap CalibratedClassifierCV if present
+    if hasattr(fitted_pipeline, "estimator") and not hasattr(fitted_pipeline, "steps"):
+        fitted_pipeline = fitted_pipeline.estimator
+
     estimator = fitted_pipeline.steps[-1][1]
     estimator_type = type(estimator).__name__
     print(f"Extracted model type: {estimator_type}")
+
+    is_catboost = "catboost" in estimator_type.lower()
 
     # --------------------------------------------------------------
     # STEP 2: Transform training data through preprocessing pipeline
     # --------------------------------------------------------------
     print("\n[2/9] Transforming data through preprocessing pipeline...")
 
-    preprocessing_steps = fitted_pipeline.steps[:-1]
+    try:
+        from imblearn.base import BaseSampler
+
+        preprocessing_steps = [
+            (name, step)
+            for name, step in fitted_pipeline.steps[:-1]
+            if not isinstance(step, BaseSampler)
+        ]
+    except ImportError:
+        preprocessing_steps = fitted_pipeline.steps[:-1]
 
     if preprocessing_steps:
         preprocessing_pipeline = Pipeline(preprocessing_steps)
         X_train_transformed = preprocessing_pipeline.transform(X_train)
         X_test_transformed = preprocessing_pipeline.transform(X_test)
     else:
-        X_train_transformed = X_train.values
-        X_test_transformed = X_test.values
+        X_train_transformed = X_train.values if hasattr(X_train, "values") else X_train
+        X_test_transformed = X_test.values if hasattr(X_test, "values") else X_test
 
     print(f"Training data shape after preprocessing: {X_train_transformed.shape}")
     print(f"Test data shape after preprocessing: {X_test_transformed.shape}")
 
     # --------------------------------------------------------------
-    # STEP 3: Create SHAP Explainer based on model type
+    # STEP 3: Sample test set
     # --------------------------------------------------------------
-    print("\n[3/9] Creating SHAP Explainer...")
+    print(f"\n[3/9] Sampling {sample_size} test samples...")
 
-    tree_based = any(
-        name in estimator_type.lower()
-        for name in ["xgb", "catboost", "gradientboosting", "randomforest", "tree"]
-    )
-
-    if tree_based:
-        explainer = shap.TreeExplainer(estimator)
-        print("Using TreeExplainer")
-    else:
-        background = X_train_transformed
-        if sp.issparse(background):
-            background = background.toarray()
-        explainer = shap.LinearExplainer(estimator, background)
-        print("Using LinearExplainer")
-
-    # --------------------------------------------------------------
-    # STEP 4: Calculate SHAP Values on Test Set
-    # --------------------------------------------------------------
-    print(f"\n[4/9] Calculating SHAP values for {sample_size} test samples...")
-
-    if X_test_transformed.shape[0] > sample_size:
-        sample_indices = np.random.choice(
-            X_test_transformed.shape[0], size=sample_size, replace=False
-        )
+    n_test = X_test_transformed.shape[0]
+    if n_test > sample_size:
+        np.random.seed(random_state)
+        sample_indices = np.random.choice(n_test, size=sample_size, replace=False)
         if hasattr(X_test_transformed, "iloc"):
-            X_sample = X_test_transformed.iloc[sample_indices]
+            X_sample_raw = X_test_transformed.iloc[sample_indices]
         else:
-            X_sample = X_test_transformed[sample_indices]
+            X_sample_raw = X_test_transformed[sample_indices]
         y_sample = y_test.iloc[sample_indices]
     else:
-        X_sample = X_test_transformed
+        X_sample_raw = X_test_transformed
         y_sample = y_test
 
-    # Calculate SHAP values
-    if tree_based:
-        shap_values = explainer.shap_values(X_sample, check_additivity=False)
+    if sp.issparse(X_sample_raw):
+        X_sample_raw = X_sample_raw.toarray()
+
+    # Get feature names from the fitted preprocessor.
+    # For RFE pipelines, get names from the preprocessor then mask with
+    # RFE support_ to return only the selected feature names.
+    if hasattr(X_test_transformed, "columns"):
+        feature_names = list(X_test_transformed.columns)
+    elif preprocessing_steps:
+        try:
+            # Get names from last non-RFE transformer
+            preproc_name, preproc_step = [
+                (n, s) for n, s in preprocessing_steps if not hasattr(s, "support_")
+            ][-1]
+            all_feature_names = list(
+                fitted_pipeline.named_steps[preproc_name].get_feature_names_out()
+            )
+            # Check if RFE was in the pipeline and mask to selected features
+            rfe_steps = [
+                (n, s) for n, s in preprocessing_steps if hasattr(s, "support_")
+            ]
+            if rfe_steps:
+                rfe_step = rfe_steps[0][1]
+                feature_names = [
+                    all_feature_names[i]
+                    for i, selected in enumerate(rfe_step.support_)
+                    if selected
+                ]
+            else:
+                feature_names = all_feature_names
+        except Exception:
+            feature_names = [f"feature_{i}" for i in range(X_test_transformed.shape[1])]
     else:
-        shap_values = explainer.shap_values(X_sample)
+        feature_names = list(X_test.columns)
+
+    X_sample = pd.DataFrame(X_sample_raw, columns=feature_names)
+
+    # --------------------------------------------------------------
+    # STEP 4: Compute SHAP values
+    # For cat_feats_and_text: use CatBoost native ShapValues (supports
+    # text features). For all other models: use SHAP TreeExplainer.
+    # --------------------------------------------------------------
+    print(f"\n[4/9] Computing SHAP values...")
+
+    # Detect text features — variable-length string cols (mean len > 20)
+    text_cols = [
+        c
+        for c in X_sample.columns
+        if X_sample[c].dtype == object
+        and X_sample[c].dropna().astype(str).str.len().mean() > 20
+    ]
+
+    if is_catboost and text_cols:
+        # CatBoost native SHAP via get_feature_importance — supports text features
+        print(f"Using CatBoost native ShapValues (text features: {text_cols})")
+        import catboost as cb
+
+        # Build cat_features and text_features index lists from X_sample
+        col_list = X_sample.columns.tolist()
+        cat_col_indices = [
+            i
+            for i, c in enumerate(col_list)
+            if X_sample[c].dtype == object and c not in text_cols
+        ]
+        text_col_indices = [col_list.index(c) for c in text_cols]
+
+        pool = cb.Pool(
+            X_sample,
+            cat_features=cat_col_indices if cat_col_indices else None,
+            text_features=text_col_indices,
+        )
+        shap_values_raw = estimator.get_feature_importance(
+            data=pool,
+            fstr_type="ShapValues",
+        )
+        # CatBoost ShapValues output shape: (n_samples, n_features + 1)
+        # Last column is the expected value (bias) — drop it
+        shap_values = shap_values_raw[:, :-1]
+
+    else:
+        # Standard SHAP TreeExplainer — drop text cols first
+        if text_cols:
+            print(f"Dropping text columns for SHAP TreeExplainer: {text_cols}")
+            X_sample = X_sample.drop(columns=text_cols)
+            feature_names = [c for c in feature_names if c not in text_cols]
+
+        tree_based = any(
+            n in estimator_type.lower()
+            for n in ["xgb", "catboost", "gradientboosting", "randomforest", "tree"]
+        )
+
+        if tree_based:
+            explainer = shap.TreeExplainer(estimator)
+            print("Using SHAP TreeExplainer")
+            shap_values = explainer.shap_values(X_sample, check_additivity=False)
+        else:
+            background = X_train_transformed
+            if sp.issparse(background):
+                background = background.toarray()
+            explainer = shap.LinearExplainer(estimator, background)
+            print("Using SHAP LinearExplainer")
+            shap_values = explainer.shap_values(X_sample)
 
     print(f"SHAP values shape: {shap_values.shape}")
-
-    # Get feature names after transformation
-    try:
-        feature_names = fitted_pipeline[:-1].get_feature_names_out()
-    except:
-        feature_names = [f"feature_{i}" for i in range(X_sample.shape[1])]
-
     print(f"Features: {len(feature_names)}")
 
-    # Convert sparse matrix to dense DataFrame for SHAP plots
-    if sp.issparse(X_sample):
-        X_sample = X_sample.toarray()
-        print("Converted sparse matrix to dense array")
-
-    X_sample = pd.DataFrame(X_sample, columns=feature_names)
-    print(f"Converted to DataFrame with feature names for SHAP visualization")
-
-    # Build display copy with proper numeric types for SHAP coloring
+    # --------------------------------------------------------------
+    # Build X_sample_display: fully numeric DataFrame for SHAP coloring.
+    #
+    # Passing a DataFrame (not .values) to shap.summary_plot lets SHAP
+    # read per-column dtypes. If any column is object dtype or contains
+    # NaN after numeric coercion, SHAP cannot assign a color scalar and
+    # falls back to gray. We fix this by:
+    #   - label-encoding any remaining object columns
+    #   - filling NaN with 0 after coercion
+    # Columns are renamed to display names so axis labels match.
+    # --------------------------------------------------------------
     from sklearn.preprocessing import LabelEncoder
 
     X_sample_display = X_sample.copy()
     for col in X_sample_display.columns:
-        if col.startswith("num__"):
+        if X_sample_display[col].dtype == object:
+            le = LabelEncoder()
+            X_sample_display[col] = le.fit_transform(
+                X_sample_display[col].fillna("__missing__").astype(str)
+            )
+        else:
             X_sample_display[col] = pd.to_numeric(
                 X_sample_display[col], errors="coerce"
-            )
-        elif col.startswith("cat__"):
-            le = LabelEncoder()
-            X_sample_display[col] = le.fit_transform(X_sample_display[col].astype(str))
+            ).fillna(0)
 
-    # Build display names (clean labels for plots)
     display_names = [_clean(f) for f in feature_names]
+    X_sample_display.columns = display_names
 
     # --------------------------------------------------------------
     # STEP 5: Summary Plot (Bar) - Feature Importance
@@ -1949,42 +2134,45 @@ def create_shap_plots(
     )
     plt.title("SHAP Feature Importance", fontsize=14, fontweight="bold")
     plt.tight_layout()
-
     plt.savefig(output_dir / "shap_importance.png", dpi=300, bbox_inches="tight")
     plt.savefig(output_dir / "shap_importance.svg", bbox_inches="tight")
-
     figures["shap_importance"] = fig_importance
     print(f"Saved: {output_dir}/shap_importance.png")
 
     # --------------------------------------------------------------
     # STEP 6: Summary Plot (Beeswarm) - Feature Effects
+    #
+    # Pass X_sample_display as a DataFrame (not .values) so SHAP reads
+    # per-column dtypes. All columns are guaranteed numeric with no NaN,
+    # eliminating gray dots on categorical features.
     # --------------------------------------------------------------
     print(f"\n[6/9] Creating beeswarm plot...")
 
     fig_beeswarm = plt.figure(figsize=(10, 8))
     shap.summary_plot(
         shap_values,
-        X_sample_display.values,  # numpy array, not DataFrame
+        X_sample_display,  # DataFrame with display-name columns, fully numeric
         feature_names=display_names,
         max_display=max_display,
         show=False,
     )
     plt.title("SHAP Summary Plot (Feature Effects)", fontsize=14, fontweight="bold")
     plt.tight_layout()
-
     plt.savefig(output_dir / "shap_beeswarm.png", dpi=300, bbox_inches="tight")
     plt.savefig(output_dir / "shap_beeswarm.svg", bbox_inches="tight")
-
     figures["shap_beeswarm"] = fig_beeswarm
     print(f"Saved: {output_dir}/shap_beeswarm.png")
 
     # --------------------------------------------------------------
     # STEP 7: Expanded Category-Level Beeswarm
+    # Only run if we have num__ or cat__ prefixed features (i.e. not
+    # RFE/OHE pipelines where prefixes are absent after transformation)
     # --------------------------------------------------------------
     print(f"\n[7/9] Creating expanded category-level beeswarm plot...")
 
-    cat_features = [c for c in feature_names if c.startswith("cat__")]
-    num_features = [c for c in feature_names if c.startswith("num__")]
+    cat_features_list = [c for c in feature_names if c.startswith("cat__")]
+    num_features_list = [c for c in feature_names if c.startswith("num__")]
+    has_prefixed_features = bool(cat_features_list or num_features_list)
 
     shap_df = pd.DataFrame(shap_values, columns=feature_names)
     X_sample_df = pd.DataFrame(
@@ -1995,31 +2183,36 @@ def create_shap_plots(
     shap_cols = {}
     feat_cols = {}
 
-    for col in cat_features:
-        display_col = _clean(col)
-        categories = X_sample_df[col].astype(str).values
-        shap_vals = shap_df[col].values
-        for cat in np.unique(categories):
-            mask = categories == cat
-            col_name = f"{display_col} = {cat}"
-            shap_cols[col_name] = np.where(mask, shap_vals, 0)
-            feat_cols[col_name] = mask.astype(float)
+    if has_prefixed_features:
+        for col in cat_features_list:
+            display_col = _clean(col)
+            categories = X_sample_df[col].astype(str).values
+            shap_vals = shap_df[col].values
+            for cat in np.unique(categories):
+                mask = categories == cat
+                col_name = f"{display_col} = {cat}"
+                shap_cols[col_name] = np.where(mask, shap_vals, 0)
+                feat_cols[col_name] = mask.astype(float)
 
-    for col in num_features:
-        display_col = _clean(col)
-        shap_cols[display_col] = shap_df[col].values
-        feat_cols[display_col] = X_sample_df[col].values
+        for col in num_features_list:
+            display_col = _clean(col)
+            shap_cols[display_col] = shap_df[col].values
+            feat_cols[display_col] = X_sample_df[col].values
+    else:
+        # No prefixes (RFE/OHE or text model) — use raw feature names as-is
+        for col in feature_names:
+            display_col = _clean(col)
+            shap_cols[display_col] = shap_df[col].values
+            feat_cols[display_col] = (
+                pd.to_numeric(X_sample_df[col], errors="coerce").fillna(0).values
+            )
 
     exploded_shap = pd.DataFrame(shap_cols)
     exploded_features = pd.DataFrame(feat_cols)
 
-    # Save per-sample expanded beeswarm data as pkl for the Dash app
     import pickle
 
-    beeswarm_payload = {
-        "shap_values": exploded_shap.values,
-        "X": exploded_features,
-    }
+    beeswarm_payload = {"shap_values": exploded_shap.values, "X": exploded_features}
     with open(output_dir / "shap_beeswarm_expanded.pkl", "wb") as f:
         pickle.dump(beeswarm_payload, f)
 
@@ -2035,15 +2228,11 @@ def create_shap_plots(
     fig_beeswarm_expanded = plt.figure(figsize=(12, 10))
     shap.plots.beeswarm(shap_explanation, max_display=max_display, show=False)
     plt.title(
-        "SHAP Summary Plot - Category-Level Drill-Down",
-        fontsize=14,
-        fontweight="bold",
+        "SHAP Summary Plot - Category-Level Drill-Down", fontsize=14, fontweight="bold"
     )
     plt.tight_layout()
-
     plt.savefig(output_dir / "shap_beeswarm_expanded.png", dpi=300, bbox_inches="tight")
     plt.savefig(output_dir / "shap_beeswarm_expanded.svg", bbox_inches="tight")
-
     figures["shap_beeswarm_expanded"] = fig_beeswarm_expanded
     print(f"Saved: {output_dir}/shap_beeswarm_expanded.png")
 
@@ -2060,12 +2249,10 @@ def create_shap_plots(
         fontweight="bold",
     )
     plt.tight_layout()
-
     plt.savefig(
         output_dir / "shap_importance_expanded.png", dpi=300, bbox_inches="tight"
     )
     plt.savefig(output_dir / "shap_importance_expanded.svg", bbox_inches="tight")
-
     figures["shap_importance_expanded"] = fig_importance_expanded
     print(f"Saved: {output_dir}/shap_importance_expanded.png")
 
@@ -2089,12 +2276,10 @@ def create_shap_plots(
         fontweight="bold",
     )
     plt.tight_layout()
-
     plt.savefig(
         output_dir / "shap_importance_expanded_blue.png", dpi=300, bbox_inches="tight"
     )
     plt.savefig(output_dir / "shap_importance_expanded_blue.svg", bbox_inches="tight")
-
     figures["shap_importance_expanded_blue"] = fig_importance_expanded_blue
     print(f"Saved: {output_dir}/shap_importance_expanded_blue.png")
 
@@ -2103,99 +2288,89 @@ def create_shap_plots(
     # --------------------------------------------------------------
     if side_by_side:
         print("\n[8c] Creating side-by-side expanded plots...")
+        print(f"     Bar style: {bar_style!r}")
 
         from PIL import Image as PILImage
         import io
 
-        # Render beeswarm to buffer
-        fig_bee_tmp = plt.figure(figsize=(12, 10))
-        shap.summary_plot(
-            shap_explanation.values,
-            shap_explanation.data,
-            feature_names=shap_explanation.feature_names,
-            max_display=max_display,
-            show=False,
-        )
-        plt.title(
-            "SHAP Summary Plot - Category-Level Drill-Down",
-            fontsize=14,
-            fontweight="bold",
-        )
-        plt.tight_layout()
-        plt.subplots_adjust(top=0.93)
+        # ----------------------------------------------------------
+        # Height matching: both panels use the same formula derived
+        # from max_display so they render at identical pixel heights.
+        # ----------------------------------------------------------
+        row_height = 0.45  # inches per feature row
+        base_height = 2.5  # title + axis padding
+        shared_height = base_height + max_display * row_height
+
+        def _make_bar_fig():
+            fig = plt.figure(figsize=(12, shared_height))
+            if bar_style == "summary":
+                shap.summary_plot(
+                    shap_explanation.values,
+                    shap_explanation.data,
+                    feature_names=shap_explanation.feature_names,
+                    plot_type="bar",
+                    max_display=max_display,
+                    show=False,
+                )
+            else:
+                shap.plots.bar(shap_explanation, max_display=max_display, show=False)
+            plt.title(
+                "SHAP Feature Importance - Category-Level Drill-Down",
+                fontsize=14,
+                fontweight="bold",
+            )
+            plt.tight_layout()
+            plt.subplots_adjust(top=0.93, bottom=0.10)
+            return fig
+
+        def _make_bee_fig():
+            fig = plt.figure(figsize=(12, shared_height))
+            shap.summary_plot(
+                shap_explanation.values,
+                shap_explanation.data,
+                feature_names=shap_explanation.feature_names,
+                max_display=max_display,
+                show=False,
+            )
+            plt.title(
+                "SHAP Summary Plot - Category-Level Drill-Down",
+                fontsize=14,
+                fontweight="bold",
+            )
+            plt.tight_layout()
+            plt.subplots_adjust(top=0.93, bottom=0.10)
+            return fig
+
+        # Beeswarm — PNG
+        fig_bee_tmp = _make_bee_fig()
         buf_bee = io.BytesIO()
         fig_bee_tmp.savefig(buf_bee, format="png", dpi=300, bbox_inches="tight")
         plt.close(fig_bee_tmp)
         buf_bee.seek(0)
         img_bee = PILImage.open(buf_bee)
 
-        # Render bar to buffer
-        fig_bar_tmp = plt.figure(figsize=(12, 10))
-        shap.summary_plot(
-            shap_explanation.values,
-            shap_explanation.data,
-            feature_names=shap_explanation.feature_names,
-            plot_type="bar",
-            max_display=max_display,
-            show=False,
-        )
-        plt.title(
-            "SHAP Feature Importance - Category-Level Drill-Down",
-            fontsize=14,
-            fontweight="bold",
-        )
-        plt.tight_layout()
-        plt.subplots_adjust(top=0.93)
+        # Bar — PNG
+        fig_bar_tmp = _make_bar_fig()
         buf_bar = io.BytesIO()
         fig_bar_tmp.savefig(buf_bar, format="png", dpi=300, bbox_inches="tight")
         plt.close(fig_bar_tmp)
         buf_bar.seek(0)
         img_bar = PILImage.open(buf_bar)
 
-        # Stitch side by side as true vector SVG
-        # Save each half to SVG buffers
+        # Beeswarm — SVG
         buf_bee_svg = io.BytesIO()
-        fig_bee_svg = plt.figure(figsize=(12, 10))
-        shap.summary_plot(
-            shap_explanation.values,
-            shap_explanation.data,
-            feature_names=shap_explanation.feature_names,
-            max_display=max_display,
-            show=False,
-        )
-        plt.title(
-            "SHAP Summary Plot - Category-Level Drill-Down",
-            fontsize=14,
-            fontweight="bold",
-        )
-        plt.tight_layout()
-        plt.subplots_adjust(top=0.93)
+        fig_bee_svg = _make_bee_fig()
         fig_bee_svg.savefig(buf_bee_svg, format="svg", bbox_inches="tight")
         plt.close(fig_bee_svg)
         buf_bee_svg.seek(0)
 
+        # Bar — SVG
         buf_bar_svg = io.BytesIO()
-        fig_bar_svg = plt.figure(figsize=(12, 10))
-        shap.summary_plot(
-            shap_explanation.values,
-            shap_explanation.data,
-            feature_names=shap_explanation.feature_names,
-            plot_type="bar",
-            max_display=max_display,
-            show=False,
-        )
-        plt.title(
-            "SHAP Feature Importance - Category-Level Drill-Down",
-            fontsize=14,
-            fontweight="bold",
-        )
-        plt.tight_layout()
-        plt.subplots_adjust(top=0.93)
+        fig_bar_svg = _make_bar_fig()
         fig_bar_svg.savefig(buf_bar_svg, format="svg", bbox_inches="tight")
         plt.close(fig_bar_svg)
         buf_bar_svg.seek(0)
 
-        # Combine two SVGs into one using XML manipulation
         import xml.etree.ElementTree as ET
 
         ET.register_namespace("", "http://www.w3.org/2000/svg")
@@ -2206,9 +2381,6 @@ def create_shap_plots(
         root_bee = tree_bee.getroot()
         root_bar = tree_bar.getroot()
 
-        ns = {"svg": "http://www.w3.org/2000/svg"}
-
-        # Extract width/height from each SVG
         def _parse_dim(val):
             """Strip 'pt' or 'px' suffix and return float."""
             return float(val.replace("pt", "").replace("px", "").strip())
@@ -2218,11 +2390,10 @@ def create_shap_plots(
         w2 = _parse_dim(root_bar.get("width", "864"))
         h2 = _parse_dim(root_bar.get("height", "720"))
 
-        gap = 20  # points of space between the two plots
+        gap = 20
         total_w = w1 + gap + w2
         total_h = max(h1, h2)
 
-        # Create combined SVG root (avoid duplicate xmlns)
         svg_ns = "http://www.w3.org/2000/svg"
         combined_svg = ET.Element(
             f"{{{svg_ns}}}svg",
@@ -2232,12 +2403,10 @@ def create_shap_plots(
             viewBox=f"0 0 {total_w} {total_h}",
         )
 
-        # Left panel: beeswarm
         g_left = ET.SubElement(combined_svg, "g", transform="translate(0,0)")
         for child in list(root_bee):
             g_left.append(child)
 
-        # Right panel: bar
         g_right = ET.SubElement(combined_svg, "g", transform=f"translate({w1 + gap},0)")
         for child in list(root_bar):
             g_right.append(child)
@@ -2249,7 +2418,6 @@ def create_shap_plots(
             encoding="unicode",
         )
 
-        # Also save high-res PNG from the raster stitch
         total_width = img_bee.width + img_bar.width
         max_height = max(img_bee.height, img_bar.height)
         combined_png = PILImage.new("RGB", (total_width, max_height), (255, 255, 255))
@@ -2257,7 +2425,6 @@ def create_shap_plots(
         combined_png.paste(img_bar, (img_bee.width, 0))
         combined_png.save(output_dir / "shap_expanded_side_by_side.png", dpi=(600, 600))
 
-        # Keep in figures dict for notebook display
         fig_side = plt.figure(figsize=(28, 12))
         plt.imshow(combined_png)
         plt.axis("off")
@@ -2290,7 +2457,6 @@ def create_shap_plots(
         output_dir / "shap_feature_importance.csv", index=False
     )
 
-    # Expanded importance table (category-level)
     expanded_importance_df = pd.DataFrame(
         {
             "feature": mean_abs.index,

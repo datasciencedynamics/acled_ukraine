@@ -43,8 +43,17 @@ drop_vars = [
 ]
 
 ################################################################################
+############################### Target Outcome #################################
+
+target_outcome = "fatalities"
+target_log_outcome = "log_fatalities"
+
+
+################################################################################
 ############################# Mlflow Variables #################################
 ################################################################################
+
+EXPERIMENT_NAME = f"{target_log_outcome}_model"
 
 mlflow_artifacts_data = "./mlruns/preprocessing"
 mlflow_models_data = "./mlruns/models"
@@ -93,14 +102,6 @@ artifact_name = "preprocessing"
 shap_artifact_name = "explainer"
 shap_run_name = "explainer"
 shap_artifacts_data = "./mlruns/explainer"
-
-
-################################################################################
-############################### Target Outcome #################################
-
-target_outcome = "fatalities"
-target_log_outcome = "log_fatalities"
-
 
 ################################################################################
 ###########################  Temporal Configurations ###########################

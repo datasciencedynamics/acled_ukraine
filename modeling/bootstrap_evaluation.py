@@ -8,8 +8,10 @@ from rich.table import Table
 from rich import box
 from sklearn.metrics import r2_score
 from sklearn.utils import resample
-from model_tuner import loadObjects, evaluate_bootstrap_metrics
+from model_tuner import evaluate_bootstrap_metrics
 from model_metrics import summarize_model_performance
+
+from core.functions import load_model_from_mlflow
 
 sys.path.append("../")
 
@@ -17,23 +19,24 @@ sys.path.append("../")
 
 BASE = Path("/home/lshpaner/Python_Projects/acled_ukraine")
 
-MODEL_PATHS = {
-    "Linear Regressor": BASE
-    / "mlruns/models/306762030449779565/162f7fd63e104b25a59bb610c4439308/artifacts/lr_log_fatalities/model.pkl",
-    ## lasso_orig_rfe_training
-    "Lasso RFE": BASE
-    / "mlruns/models/306762030449779565/3d48f6d0797b4477bdcff57e51428624/artifacts/lasso_log_fatalities/model.pkl",
-    # ridge_orig_rfe_training
-    "Ridge RFE": BASE
-    / "mlruns/models/306762030449779565/37d760e4bca144708b8decb30afb8fa7/artifacts/ridge_log_fatalities/model.pkl",
-    # elasticnet_orig_rfe_training
-    "ElasticNet RFE": BASE
-    / "mlruns/models/306762030449779565/335f28ea0fc54feb8016b00993ade2c5/artifacts/elastic_net_log_fatalities/model.pkl",
-    "XGBoost Regressor": BASE
-    / "mlruns/models/306762030449779565/04c10026de6d4dda9e318683f439be25/artifacts/xgb_log_fatalities/model.pkl",
-    # cat_orig_rfe_training
-    "CatBoost Regressor": BASE
-    / "mlruns/models/306762030449779565/a11e1a6f5f98417cb1c1cc05a4d5b195/artifacts/cat_log_fatalities/model.pkl",
+# flavor (run name in MLflow) -> algo prefix used in the artifact folder
+FLAVORS = {
+    "lr_orig_training": "lr",
+    "lasso_orig_rfe_training": "lasso",
+    "ridge_orig_rfe_training": "ridge",
+    "elastic_net_orig_rfe_training": "elastic_net",
+    "xgb_orig_training": "xgb",
+    "cat_orig_training": "cat",
+}
+
+# Map flavor keys to the human-readable display names used downstream
+FLAVOR_TO_DISPLAY = {
+    "lr_orig_training": "Linear Regressor",
+    "lasso_orig_rfe_training": "Lasso RFE",
+    "ridge_orig_rfe_training": "Ridge RFE",
+    "elastic_net_orig_rfe_training": "ElasticNet RFE",
+    "xgb_orig_training": "XGBoost Regressor",
+    "cat_orig_training": "CatBoost Regressor",
 }
 
 DATA_DIR = BASE / "data/processed"
@@ -87,9 +90,15 @@ def load_data() -> tuple:
 
 
 def load_models() -> dict:
-    """Load all model objects from disk."""
+    """Load all model objects from MLflow, keyed by display name."""
     console.print("[bold cyan]Loading models...[/bold cyan]")
-    return {name: loadObjects(str(path)) for name, path in MODEL_PATHS.items()}
+    models_by_flavor = {
+        flavor: load_model_from_mlflow(flavor, algo) for flavor, algo in FLAVORS.items()
+    }
+    # Re-key by display name so downstream code keeps working
+    return {
+        FLAVOR_TO_DISPLAY[flavor]: model for flavor, model in models_by_flavor.items()
+    }
 
 
 def encode_categoricals(X_train, *splits) -> list:
@@ -128,7 +137,7 @@ def rename_metrics(df: pd.DataFrame) -> pd.DataFrame:
     # Rename first
     df["Metric"] = df["Metric"].map(METRIC_DISPLAY_NAMES).fillna(df["Metric"])
 
-    # Flip based on display names — no dependency on sklearn internal names
+    # Flip based on display names, no dependency on sklearn internal names
     error_metrics = {"RMSE", "MSE", "MAE"}
     mask = df["Metric"].isin(error_metrics)
 
@@ -234,7 +243,7 @@ def bootstrap_capture_auc(
         else:
             y_norm = cumsum / total
             x_norm = np.linspace(1 / len(y_norm), 1.0, len(y_norm))
-            auc_scores.append(float(np.trapz(y_norm, x_norm)))
+            auc_scores.append(float(np.trapezoid(y_norm, x_norm)))
 
     mean_score = np.mean(auc_scores)
     ci_lower = np.percentile(auc_scores, 2.5)
@@ -335,7 +344,7 @@ def main(
     X_split = X_valid if split == "valid" else X_test
     y_split = y_valid if split == "valid" else y_test
 
-    console.rule(f"[bold]Bootstrap Evaluation — {split.capitalize()} Set[/bold]")
+    console.rule(f"[bold]Bootstrap Evaluation, {split.capitalize()} Set[/bold]")
     all_results = run_bootstrap(
         models,
         X_train,
