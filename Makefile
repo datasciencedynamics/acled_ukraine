@@ -149,7 +149,7 @@ clean_dir:
 .PHONY: create_folders
 create_folders:
 # Create data subdirectories
-	mkdir -p data/external data/interim data/processed data/raw data/processed/inference
+	mkdir -p data/external data/interim data/processed data/raw data/processed/inference data/viz_data
 	mkdir -p modeling
 	mkdir -p preprocessing
 	mkdir -p images/png_images images/svg_images images/html_images
