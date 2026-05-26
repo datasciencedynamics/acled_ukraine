@@ -74,10 +74,10 @@ acled_ukraine/
 │   ├── data_exploration.ipynb
 │   ├── embeddings_eda.ipynb
 │   ├── event_date_statistics.ipynb
+|   ├── map_visualizations.ipynb
 │   ├── partial_dependence.ipynb
-│   ├── performance_assessment.ipynb
-│   ├── theoretical_auc.ipynb
-│   └── visualizations.ipynb
+│   ├── performance_assessment.ipynb 
+│   └── theoretical_auc.ipynb
 │
 ├── preprocessing/
 │   ├── preprocessing.py
