@@ -306,7 +306,23 @@ def main(
         infer_df = all_dfs[0][1]
 
     ############################################################################
-    # Step 9. Zero Variance Columns
+    # Step 9. Calculate Row-wise Missingness Percentage
+    ############################################################################
+    # This step computes the proportion of missing values for each row in the
+    # DataFrame. It helps identify rows with a high level of incompleteness,
+    # which may be useful for filtering, imputation strategies, or downstream
+    # analysis.
+    #
+    # A new column is added to each dataframe where each value represents
+    # the percentage of columns that are missing for that row.
+    ############################################################################
+
+    for _name, _df in all_dfs:
+        _df[percent_miss] = _df.isna().mean(axis=1)
+
+
+    ############################################################################
+    # Step 10. Zero Variance Columns
     ############################################################################
     # Select only numeric columns s/t .var() can be applied since you can
     # only call this function on numeric columns; otherwise, if you include
@@ -366,22 +382,7 @@ def main(
         print(f"{_name.capitalize()} shape after dropping zero var cols: {_df.shape}")
 
     ############################################################################
-    # Step 10. Calculate Row-wise Missingness Percentage
-    ############################################################################
-    # This step computes the proportion of missing values for each row in the
-    # DataFrame. It helps identify rows with a high level of incompleteness,
-    # which may be useful for filtering, imputation strategies, or downstream
-    # analysis.
-    #
-    # A new column is added to each dataframe where each value represents
-    # the percentage of columns that are missing for that row.
-    ############################################################################
-
-    for _name, _df in all_dfs:
-        _df[percent_miss] = _df.isna().mean(axis=1)
-
-    ############################################################################
-    # Step 10b. Ensure parquet-safe dtypes
+    # Step 11. Ensure parquet-safe dtypes
     ############################################################################
     # PyArrow requires consistent column types.
     # Some ACLED admin/location fields may contain mixed types.
@@ -393,7 +394,7 @@ def main(
         _df[obj_cols] = _df[obj_cols].astype(str)
 
     ############################################################################
-    # Step 11. Save Processed Data
+    # Step 12. Save Processed Data
     ############################################################################
     ############################################################################
 
