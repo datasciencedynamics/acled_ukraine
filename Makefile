@@ -10,6 +10,12 @@ CONDA_ENV_NAME = acled_conda
 MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 PROJECT_DIRECTORY := $(abspath $(MAKEFILE_DIR))
 
+############################### Data Globals ###################################
+
+# Raw ACLED export (filename contains spaces; always quote "$(RAW_CSV)")
+RAW_CSV = ./data/raw/ACLED Data_2026-10-21_event_date_from_2022-01-01_event_date_to_2025-12-31.csv
+RAW_PARQUET = ./data/raw/acled_ukraine_data_2026_10_21.parquet
+
 ############################## Training Globals ################################
 
 # Define variables for looping
@@ -173,21 +179,21 @@ create_folders:
 .PHONY: data_gen
 data_gen:
 	$(PYTHON_INTERPRETER) preprocessing/data_gen.py \
-		--input-data-file "./data/raw/ACLED Data_2026-01-02.csv" \
-		--output-data-file "./data/raw/acled_ukraine_data_2026_01_02.parquet" \
+		--input-data-file "$(RAW_CSV)" \
+		--output-data-file "$(RAW_PARQUET)" \
 		2>&1 | tee ./data/raw/data_gen.txt
 
 .PHONY: temporal_splits
 temporal_splits:
 	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/temporal_splits.py \
-		--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
+		--input-data-file "$(RAW_PARQUET)" \
 		--data-path ./data/processed \
 		2>&1 | tee ./data/processed/temporal_splits.txt
 
 .PHONY: data_prep_preprocessing_training
 data_prep_preprocessing_training:
 	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/preprocessing.py \
-		--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
+		--input-data-file "$(RAW_PARQUET)" \
 		--output-data-file ./data/processed/df_sans_zero_missing.parquet \
 		--stage training \
 		--data-path ./data/processed \
@@ -487,7 +493,7 @@ model_explaining_training: model_explainer model_explanations_training
 .PHONY: data_prep_preprocessing_inference
 data_prep_preprocessing_inference:
 	$(PYTHON_INTERPRETER) $(PROJECT_DIRECTORY)/preprocessing/preprocessing.py \
-		--input-data-file ./data/raw/acled_ukraine_data_2026_01_02.parquet \
+		--input-data-file "$(RAW_PARQUET)" \
 		--output-data-file ./data/processed/inference/df_inference_process.parquet \
 		--stage inference \
 		--data-path ./data/processed \
